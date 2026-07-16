@@ -1,0 +1,21 @@
+# Compiled provider binary
+terraform-provider-smtpfast
+dist/
+
+# Go
+*.test
+*.out
+vendor/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
