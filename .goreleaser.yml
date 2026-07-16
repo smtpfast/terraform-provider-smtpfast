@@ -54,6 +54,10 @@ signs:
 
 release:
   draft: false
+  # The Terraform Registry reads this to learn the provider speaks protocol 6.0.
+  extra_files:
+    - glob: "terraform-registry-manifest.json"
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
 changelog:
   disable: true
