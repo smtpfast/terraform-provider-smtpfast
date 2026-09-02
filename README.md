@@ -17,14 +17,30 @@ resource "smtpfast_domain" "example" {
 resource "cloudflare_record" "smtpfast" {
   for_each = { for idx, rec in smtpfast_domain.example.dns_records : idx => rec }
 
-  zone_id = var.cloudflare_zone_id
-  type    = each.value.type
-  name    = each.value.name
-  content = each.value.value
+  zone_id  = var.cloudflare_zone_id
+  type     = each.value.type
+  name     = each.value.name
+  content  = each.value.value
+  priority = each.value.priority # set on MX records only, null otherwise
 }
 ```
 
 No copy-pasting DNS records from a dashboard.
+
+### Inbound email
+
+Once a domain is verified, turn on receiving and the MX record shows up in `dns_records` like any other record, so the same `for_each` publishes it:
+
+```hcl
+resource "smtpfast_domain" "inbound" {
+  domain            = "inbound.example.com"
+  receiving_enabled = true # needs a verified domain (or a subdomain of one); set it in a second apply on a brand-new domain
+}
+
+output "receiving_status" {
+  value = smtpfast_domain.inbound.receiving_status # disabled, pending, active or failed
+}
+```
 
 ## Usage
 
