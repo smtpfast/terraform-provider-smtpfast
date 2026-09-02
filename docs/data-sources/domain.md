@@ -33,6 +33,8 @@ output "domain_dns_records" {
 
 - `dns_records` (Attributes List) DNS records required to verify the domain. (see [below for nested schema](#nestedatt--dns_records))
 - `domain` (String) The domain name.
+- `receiving_enabled` (Boolean) Whether inbound email is turned on for this domain.
+- `receiving_status` (String) Inbound status: `disabled`, `pending`, `active`, or `failed`.
 - `status` (String) Verification status: `pending`, `verified`, or `failed`.
 
 <a id="nestedatt--dns_records"></a>
@@ -41,5 +43,6 @@ output "domain_dns_records" {
 Read-Only:
 
 - `name` (String) Record name/host.
+- `priority` (Number) Priority, set on MX records only.
 - `type` (String) DNS record type (CNAME, TXT, MX).
 - `value` (String) Record value.

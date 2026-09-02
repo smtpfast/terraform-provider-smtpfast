@@ -10,14 +10,36 @@ type DNSRecord struct {
 	Type  string `json:"type"`
 	Name  string `json:"name"`
 	Value string `json:"value"`
+	// Priority is set on MX records (inbound receiving) and nil otherwise.
+	Priority *int64 `json:"priority,omitempty"`
 }
 
 // Domain is a sending domain.
 type Domain struct {
-	ID         string      `json:"id"`
-	Domain     string      `json:"domain"`
-	Status     string      `json:"status"`
-	DNSRecords []DNSRecord `json:"dns_records"`
+	ID         string           `json:"id"`
+	Domain     string           `json:"domain"`
+	Status     string           `json:"status"`
+	DNSRecords []DNSRecord      `json:"dns_records"`
+	Receiving  *DomainReceiving `json:"receiving,omitempty"`
+}
+
+// DomainReceiving is the inbound email state of a domain.
+type DomainReceiving struct {
+	Enabled bool   `json:"enabled"`
+	Status  string `json:"status"`
+}
+
+// SetDomainReceiving turns inbound email on or off for a domain. Enabling
+// needs a paid plan and a domain that is verified for sending.
+func (c *Client) SetDomainReceiving(ctx context.Context, id string, enabled bool) (*DomainReceiving, error) {
+	var out struct {
+		Receiving DomainReceiving `json:"receiving"`
+	}
+	err := c.do(ctx, http.MethodPatch, "/v1/domains/"+id, map[string]bool{"receiving_enabled": enabled}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out.Receiving, nil
 }
 
 // CreateDomain registers a new sending domain.
