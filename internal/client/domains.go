@@ -10,6 +10,8 @@ type DNSRecord struct {
 	Type  string `json:"type"`
 	Name  string `json:"name"`
 	Value string `json:"value"`
+	// Priority is set on MX records (inbound receiving) and nil otherwise.
+	Priority *int64 `json:"priority,omitempty"`
 }
 
 // Domain is a sending domain.

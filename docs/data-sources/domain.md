@@ -43,5 +43,6 @@ output "domain_dns_records" {
 Read-Only:
 
 - `name` (String) Record name/host.
+- `priority` (Number) Priority, set on MX records only.
 - `type` (String) DNS record type (CNAME, TXT, MX).
 - `value` (String) Record value.

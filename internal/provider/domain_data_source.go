@@ -67,9 +67,10 @@ func (d *domainDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Computed:            true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"type":  schema.StringAttribute{MarkdownDescription: "DNS record type (CNAME, TXT, MX).", Computed: true},
-						"name":  schema.StringAttribute{MarkdownDescription: "Record name/host.", Computed: true},
-						"value": schema.StringAttribute{MarkdownDescription: "Record value.", Computed: true},
+						"type":     schema.StringAttribute{MarkdownDescription: "DNS record type (CNAME, TXT, MX).", Computed: true},
+						"name":     schema.StringAttribute{MarkdownDescription: "Record name/host.", Computed: true},
+						"value":    schema.StringAttribute{MarkdownDescription: "Record value.", Computed: true},
+						"priority": schema.Int64Attribute{MarkdownDescription: "Priority, set on MX records only.", Computed: true},
 					},
 				},
 			},

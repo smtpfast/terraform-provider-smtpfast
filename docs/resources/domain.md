@@ -44,7 +44,7 @@ output "domain_status" {
 
 ### Optional
 
-- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must already be verified for sending, so set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record to publish.
+- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must already be verified for sending, so set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.
 
 ### Read-Only
 
@@ -59,5 +59,6 @@ output "domain_status" {
 Read-Only:
 
 - `name` (String) Record name/host.
+- `priority` (Number) Priority, set on MX records only.
 - `type` (String) DNS record type (CNAME, TXT, MX).
 - `value` (String) Record value.
