@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -32,10 +33,12 @@ type domainResource struct {
 }
 
 type domainResourceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Domain     types.String `tfsdk:"domain"`
-	Status     types.String `tfsdk:"status"`
-	DNSRecords types.List   `tfsdk:"dns_records"`
+	ID               types.String `tfsdk:"id"`
+	Domain           types.String `tfsdk:"domain"`
+	Status           types.String `tfsdk:"status"`
+	DNSRecords       types.List   `tfsdk:"dns_records"`
+	ReceivingEnabled types.Bool   `tfsdk:"receiving_enabled"`
+	ReceivingStatus  types.String `tfsdk:"receiving_status"`
 }
 
 // dnsRecordAttrTypes is the object type of a single DNS record, shared by the
@@ -70,6 +73,16 @@ func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "Verification status: `pending`, `verified`, or `failed`.",
+				Computed:            true,
+			},
+			"receiving_enabled": schema.BoolAttribute{
+				MarkdownDescription: "Turn inbound email on for this domain (paid plans). The domain must already be verified for sending, so set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record to publish.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"receiving_status": schema.StringAttribute{
+				MarkdownDescription: "Inbound status: `disabled`, `pending` (MX record not seen yet), `active`, or `failed` (another MX record ties or outranks ours).",
 				Computed:            true,
 			},
 			"dns_records": schema.ListNestedAttribute{
@@ -111,6 +124,18 @@ func (r *domainResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Error creating domain", err.Error())
 		return
 	}
+	if plan.ReceivingEnabled.ValueBool() {
+		if _, err := r.client.SetDomainReceiving(ctx, domain.ID, true); err != nil {
+			resp.Diagnostics.AddError(
+				"Error enabling receiving",
+				"The domain was created but inbound email could not be enabled: "+err.Error()+". Receiving needs a verified domain; keep receiving_enabled = false until the domain is verified, then set it to true.",
+			)
+			return
+		}
+		if refreshed, err := r.client.GetDomain(ctx, domain.ID); err == nil {
+			domain = refreshed
+		}
+	}
 
 	resp.Diagnostics.Append(r.mapToState(ctx, domain, &plan)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
@@ -137,8 +162,27 @@ func (r *domainResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
-// Update never runs: the only writable attribute (domain) forces replacement.
-func (r *domainResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+// Update handles the receiving toggle; the domain name itself forces replacement.
+func (r *domainResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state domainResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !plan.ReceivingEnabled.Equal(state.ReceivingEnabled) {
+		if _, err := r.client.SetDomainReceiving(ctx, state.ID.ValueString(), plan.ReceivingEnabled.ValueBool()); err != nil {
+			resp.Diagnostics.AddError("Error updating domain receiving", err.Error())
+			return
+		}
+	}
+	domain, err := r.client.GetDomain(ctx, state.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading domain", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(r.mapToState(ctx, domain, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *domainResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -167,5 +211,12 @@ func (r *domainResource) mapToState(ctx context.Context, d *client.Domain, m *do
 
 	list, diags := dnsRecordsToList(ctx, d.DNSRecords)
 	m.DNSRecords = list
+	if d.Receiving != nil {
+		m.ReceivingEnabled = types.BoolValue(d.Receiving.Enabled)
+		m.ReceivingStatus = types.StringValue(d.Receiving.Status)
+	} else {
+		m.ReceivingEnabled = types.BoolValue(false)
+		m.ReceivingStatus = types.StringValue("disabled")
+	}
 	return diags
 }

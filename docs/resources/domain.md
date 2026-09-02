@@ -42,10 +42,15 @@ output "domain_status" {
 
 - `domain` (String) The domain name to send from, e.g. `mail.example.com`. Changing this forces a new resource.
 
+### Optional
+
+- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must already be verified for sending, so set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record to publish.
+
 ### Read-Only
 
 - `dns_records` (Attributes List) DNS records to publish to verify and enable the domain. (see [below for nested schema](#nestedatt--dns_records))
 - `id` (String) Unique identifier of the domain.
+- `receiving_status` (String) Inbound status: `disabled`, `pending` (MX record not seen yet), `active`, or `failed` (another MX record ties or outranks ours).
 - `status` (String) Verification status: `pending`, `verified`, or `failed`.
 
 <a id="nestedatt--dns_records"></a>

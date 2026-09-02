@@ -48,6 +48,31 @@ func TestCreateDomain(t *testing.T) {
 	}
 }
 
+func TestSetDomainReceiving(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v1/domains/dom_1" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]bool
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !body["receiving_enabled"] {
+			t.Errorf("receiving_enabled = %v, want true", body["receiving_enabled"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":        "dom_1",
+			"receiving": map[string]any{"enabled": true, "status": "pending"},
+		})
+	})
+
+	got, err := c.SetDomainReceiving(context.Background(), "dom_1", true)
+	if err != nil {
+		t.Fatalf("SetDomainReceiving: %v", err)
+	}
+	if !got.Enabled || got.Status != "pending" {
+		t.Fatalf("unexpected receiving: %+v", got)
+	}
+}
+
 func TestGetDomainNotFound(t *testing.T) {
 	c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

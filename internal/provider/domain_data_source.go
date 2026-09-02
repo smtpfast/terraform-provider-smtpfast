@@ -26,10 +26,12 @@ type domainDataSource struct {
 }
 
 type domainDataSourceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Domain     types.String `tfsdk:"domain"`
-	Status     types.String `tfsdk:"status"`
-	DNSRecords types.List   `tfsdk:"dns_records"`
+	ID               types.String `tfsdk:"id"`
+	Domain           types.String `tfsdk:"domain"`
+	Status           types.String `tfsdk:"status"`
+	DNSRecords       types.List   `tfsdk:"dns_records"`
+	ReceivingEnabled types.Bool   `tfsdk:"receiving_enabled"`
+	ReceivingStatus  types.String `tfsdk:"receiving_status"`
 }
 
 func (d *domainDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -50,6 +52,14 @@ func (d *domainDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "Verification status: `pending`, `verified`, or `failed`.",
+				Computed:            true,
+			},
+			"receiving_enabled": schema.BoolAttribute{
+				MarkdownDescription: "Whether inbound email is turned on for this domain.",
+				Computed:            true,
+			},
+			"receiving_status": schema.StringAttribute{
+				MarkdownDescription: "Inbound status: `disabled`, `pending`, `active`, or `failed`.",
 				Computed:            true,
 			},
 			"dns_records": schema.ListNestedAttribute{
@@ -99,6 +109,12 @@ func (d *domainDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	list, diags := dnsRecordsToList(ctx, domain.DNSRecords)
 	resp.Diagnostics.Append(diags...)
 	state.DNSRecords = list
+	state.ReceivingEnabled = types.BoolValue(domain.Receiving != nil && domain.Receiving.Enabled)
+	if domain.Receiving != nil {
+		state.ReceivingStatus = types.StringValue(domain.Receiving.Status)
+	} else {
+		state.ReceivingStatus = types.StringValue("disabled")
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
