@@ -74,7 +74,7 @@ func (r *contactPropertyResource) Schema(_ context.Context, _ resource.SchemaReq
 			"fallback_value": schema.StringAttribute{
 				MarkdownDescription: "Used when a contact has no value. Always written as a string; for a `number` property it must be a number, such as `\"0\"`. Up to 500 characters. Updates in place; omit it for no default.",
 				Optional:            true,
-				Validators:          []validator.String{stringvalidator.UTF8LengthAtMost(500)},
+				Validators:          []validator.String{jsLengthAtMost(500)},
 			},
 			"created_at": schema.StringAttribute{
 				MarkdownDescription: "Creation timestamp (RFC 3339).",

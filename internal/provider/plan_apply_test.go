@@ -205,6 +205,41 @@ const testTemplateConfig = `resource "smtpfast_template" "test" {
 }
 `
 
+// A webhook paused outside Terraform stays paused while the configuration
+// does not set active.
+func TestPlanApplyWebhookKeepsOutOfBandPause(t *testing.T) {
+	skipWithoutTerraform(t)
+	api, url := newFakeAPI(t)
+	config := fakeProviderConfig(url) + `resource "smtpfast_webhook" "test" {
+  url    = "https://example.com/hooks/smtpfast"
+  events = ["email.sent"]
+}`
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check:  resource.TestCheckResourceAttr("smtpfast_webhook.test", "active", "true"),
+			},
+			{
+				PreConfig: func() {
+					api.mu.Lock()
+					defer api.mu.Unlock()
+					for _, wh := range api.webhooks {
+						wh.Active = false
+					}
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				Check: resource.TestCheckResourceAttr("smtpfast_webhook.test", "active", "false"),
+			},
+		},
+	})
+}
+
 func TestPlanApplyTemplate(t *testing.T) {
 	skipWithoutTerraform(t)
 	api, url := newFakeAPI(t)

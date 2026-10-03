@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -130,5 +131,60 @@ func TestNotReserved(t *testing.T) {
 	}
 	if !runStringValidator(v, "ORDER_ID") {
 		t.Error("ORDER_ID should be allowed")
+	}
+}
+
+func TestJSLength(t *testing.T) {
+	for s, want := range map[string]int{"": 0, "abc": 3, "café": 4, "😀": 2, "a😀b": 4} {
+		if got := jsLength(s); got != want {
+			t.Errorf("jsLength(%q) = %d, want %d", s, got, want)
+		}
+	}
+	// 300 emoji are 300 code points but 600 UTF-16 units, over the API's 500.
+	if runStringValidator(jsLengthAtMost(500), strings.Repeat("😀", 300)) {
+		t.Error("300 emoji should exceed a 500 character limit")
+	}
+	if !runStringValidator(jsLengthAtMost(500), strings.Repeat("😀", 250)) {
+		t.Error("250 emoji should fit a 500 character limit")
+	}
+}
+
+func TestTrimmedLineUsesJavaScriptWhitespace(t *testing.T) {
+	run := func(s string) bool {
+		for _, v := range trimmedLine(100) {
+			if !runStringValidator(v, s) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, ok := range []string{"Production", "a b", "x\u0085"} {
+		if !run(ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", " Production", "Production ", "\u00a0Production\u00a0", "\ufeffProduction", "Production\u3000", "a\nb", "a\u2028b"} {
+		if run(bad) {
+			t.Errorf("%q should be invalid", bad)
+		}
+	}
+}
+
+func TestNotBlankAndPlainName(t *testing.T) {
+	if runStringValidator(notBlank(), "\u00a0\u2003") {
+		t.Error("only Unicode whitespace should be blank")
+	}
+	if !runStringValidator(notBlank(), " <p>hi</p> ") {
+		t.Error("text with content should not be blank")
+	}
+	for _, ok := range []string{"Ada", "Ada from Support"} {
+		if !runStringValidator(plainName(), ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"Ada  Lovelace", " Ada", "Ada\u00a0Lovelace", "Ada <ada@example.com>", "@ada"} {
+		if runStringValidator(plainName(), bad) {
+			t.Errorf("%q should be invalid", bad)
+		}
 	}
 }

@@ -78,8 +78,8 @@ func (r *templateResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	bodyValidators := []validator.String{
-		stringvalidator.UTF8LengthAtMost(100000),
-		stringvalidator.RegexMatches(hasNonSpaceRegexp, "must not be empty or only whitespace"),
+		jsLengthAtMost(100000),
+		notBlank(),
 	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A hosted email template (Resend-compatible). Sends name it by `id` or `alias` and fill its `variables`.\n\n" +
@@ -143,7 +143,7 @@ func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"text": schema.StringAttribute{
 				MarkdownDescription: "The plain-text body. When omitted, the text part is generated from the HTML at send time. Set it to `\"\"` to send an empty plain-text part instead.",
 				Optional:            true,
-				Validators:          []validator.String{stringvalidator.UTF8LengthAtMost(100000)},
+				Validators:          []validator.String{jsLengthAtMost(100000)},
 			},
 			"variables": schema.ListNestedAttribute{
 				MarkdownDescription: "Variables the content uses, up to 50. A send must pass a value for every variable that has no `fallback_value`.",
@@ -167,7 +167,7 @@ func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 						"fallback_value": schema.StringAttribute{
 							MarkdownDescription: "Used when a send gives no value. Always written as a string; for a `number` variable it must be a number, such as `\"25\"`. Up to 2,000 characters.",
 							Optional:            true,
-							Validators:          []validator.String{stringvalidator.UTF8LengthAtMost(2000)},
+							Validators:          []validator.String{jsLengthAtMost(2000)},
 						},
 					},
 				},

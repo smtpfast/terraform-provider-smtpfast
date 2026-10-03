@@ -11,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -87,10 +86,10 @@ func (r *webhookResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"active": schema.BoolAttribute{
-				MarkdownDescription: "Whether events are delivered. Set to `false` to pause delivery without deleting the webhook. Defaults to `true`.",
+				MarkdownDescription: "Whether events are delivered. Set to `false` to pause delivery without deleting the webhook. A new webhook starts active. When omitted, Terraform keeps the current value, so a webhook paused in the dashboard stays paused.",
 				Optional:            true,
 				Computed:            true,
-				Default:             booldefault.StaticBool(true),
+				PlanModifiers:       []planmodifier.Bool{keepStateOrDefaultBool{def: true}},
 			},
 			"signing_secret": schema.StringAttribute{
 				MarkdownDescription: "The secret that signs `standard` deliveries (the `X-SMTPfast-Signature` header). Only returned on create, so it is empty after an import.",
@@ -264,4 +263,28 @@ func mapWebhookToState(wh *client.Webhook, m *webhookResourceModel) diag.Diagnos
 		m.SigningSecret = types.StringNull()
 	}
 	return reconcileStringList(wh.Events, &m.Events)
+}
+
+// keepStateOrDefaultBool plans an omitted attribute as its current state
+// value, or as def on create. A static default would instead plan def on
+// every apply and undo a change made outside Terraform.
+type keepStateOrDefaultBool struct{ def bool }
+
+func (m keepStateOrDefaultBool) Description(context.Context) string {
+	return fmt.Sprintf("Keeps the current value when omitted; %t on create.", m.def)
+}
+
+func (m keepStateOrDefaultBool) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (m keepStateOrDefaultBool) PlanModifyBool(_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+		resp.PlanValue = types.BoolValue(m.def)
+		return
+	}
+	resp.PlanValue = req.StateValue
 }

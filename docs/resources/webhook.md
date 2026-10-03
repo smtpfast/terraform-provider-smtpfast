@@ -51,7 +51,7 @@ resource "smtpfast_webhook" "alerts" {
 
 ### Optional
 
-- `active` (Boolean) Whether events are delivered. Set to `false` to pause delivery without deleting the webhook. Defaults to `true`.
+- `active` (Boolean) Whether events are delivered. Set to `false` to pause delivery without deleting the webhook. A new webhook starts active. When omitted, Terraform keeps the current value, so a webhook paused in the dashboard stays paused.
 - `format` (String) Delivery format: `standard` (signed JSON for your own endpoint), `discord` or `slack` (readable messages for a chat channel, not signed). When omitted on create, the API picks `discord` or `slack` for Discord and Slack webhook URLs and `standard` otherwise. It does not pick again when `url` changes later, so set it if you move between them.
 
 ### Read-Only

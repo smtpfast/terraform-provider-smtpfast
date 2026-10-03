@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -76,22 +76,91 @@ var (
 var (
 	// The API's hostname rule, without the 253 character limit, which is a
 	// separate length check (RE2 has no lookahead).
-	domainNameRegexp = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
-	// One line, not empty, no leading or trailing whitespace. The API trims
-	// these fields, so anything else would come back different from the plan.
-	trimmedLineRegexp       = regexp.MustCompile(`^\S(.*\S)?$`)
+	domainNameRegexp        = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	templateAliasRegexp     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 	templateVariableRegexp  = regexp.MustCompile(`^[A-Za-z0-9_]{1,50}$`)
 	contactPropertyKeyRegex = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
-	hasNonSpaceRegexp       = regexp.MustCompile(`\S`)
 )
 
+// jsLength is the length the API measures: JavaScript string length, in
+// UTF-16 code units, so a character outside the BMP such as an emoji counts 2.
+func jsLength(s string) int {
+	n := 0
+	for _, r := range s {
+		if r > 0xFFFF {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// isJSSpace reports whether JavaScript's String.prototype.trim removes r.
+// That is Go's unicode.IsSpace without U+0085, plus U+FEFF.
+func isJSSpace(r rune) bool {
+	return r == '\uFEFF' || (r != '\u0085' && unicode.IsSpace(r))
+}
+
+// jsLengthBetween checks the length the way the API does (see jsLength).
+func jsLengthBetween(minLen, maxLen int) validator.String {
+	return stringFunc{
+		desc: fmt.Sprintf("must be %d to %d characters long", minLen, maxLen),
+		fn: func(s string) string {
+			if n := jsLength(s); n < minLen || n > maxLen {
+				return fmt.Sprintf("must be %d to %d characters long (emoji count as 2), got %d", minLen, maxLen, n)
+			}
+			return ""
+		},
+	}
+}
+
+func jsLengthAtMost(maxLen int) validator.String { return jsLengthBetween(0, maxLen) }
+
+// notBlank refuses a value that is empty after the API trims it.
+func notBlank() validator.String {
+	return stringFunc{
+		desc: "must not be empty or only whitespace",
+		fn: func(s string) string {
+			if strings.TrimFunc(s, isJSSpace) == "" {
+				return "must not be empty or only whitespace"
+			}
+			return ""
+		},
+	}
+}
+
 // trimmedLine validates a single-line text field the API trims, up to maxLen
-// characters.
+// characters. The value must already be trimmed, or the API would store a
+// different value from the plan.
 func trimmedLine(maxLen int) []validator.String {
 	return []validator.String{
-		stringvalidator.UTF8LengthBetween(1, maxLen),
-		stringvalidator.RegexMatches(trimmedLineRegexp, "must be one line without leading or trailing whitespace"),
+		jsLengthBetween(1, maxLen),
+		stringFunc{
+			desc: "must be one line without leading or trailing whitespace",
+			fn: func(s string) string {
+				if strings.ContainsAny(s, "\r\n\u2028\u2029") || strings.TrimFunc(s, isJSSpace) != s {
+					return "must be one line without leading or trailing whitespace"
+				}
+				return ""
+			},
+		},
+	}
+}
+
+// plainName checks a display name in the form the API stores: the API turns
+// every whitespace run into one space and trims, so only single ASCII spaces
+// between words come back unchanged. No <, > or @.
+func plainName() validator.String {
+	const msg = "must be a plain name: single spaces between words, no leading or trailing whitespace, and no <, > or @"
+	return stringFunc{
+		desc: msg,
+		fn: func(s string) string {
+			if strings.ContainsAny(s, "<>@") || strings.Join(strings.FieldsFunc(s, isJSSpace), " ") != s {
+				return msg
+			}
+			return ""
+		},
 	}
 }
 

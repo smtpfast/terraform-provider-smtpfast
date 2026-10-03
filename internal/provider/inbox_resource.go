@@ -3,9 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
-	"regexp"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -43,7 +41,6 @@ type inboxResourceModel struct {
 
 // The API collapses runs of whitespace in from_name and refuses <, > and @,
 // so only a name already in that form comes back unchanged.
-var fromNameRegexp = regexp.MustCompile(`^[^\s<>@]+( [^\s<>@]+)*$`)
 
 func (r *inboxResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_inbox"
@@ -79,8 +76,8 @@ func (r *inboxResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "The name recipients see, such as `Ada from Support`. A plain name, not a `Name <email>` address: no `<`, `>` or `@`. Up to 100 characters. Omit it to send from the bare address.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.UTF8LengthBetween(1, 100),
-					stringvalidator.RegexMatches(fromNameRegexp, "must be a plain name: single spaces between words, no leading or trailing whitespace, and no <, > or @"),
+					jsLengthBetween(1, 100),
+					plainName(),
 				},
 			},
 			"domain_id": schema.StringAttribute{
