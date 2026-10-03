@@ -2,10 +2,12 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -126,6 +128,7 @@ func (r *teamInviteResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	mapTeamInviteToState(inv, &plan)
+	resp.Diagnostics.Append(saveInviteSend(ctx, inv, resp.Private)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
@@ -153,6 +156,11 @@ func (r *teamInviteResource) Read(ctx context.Context, req resource.ReadRequest,
 	for i := range invites {
 		if invites[i].ID == id || (strings.Contains(id, "@") && invites[i].Email == id) {
 			mapTeamInviteToState(&invites[i], &state)
+			// The first read after an import records the send; later reads
+			// never change it.
+			if send, diags := loadInviteSend(ctx, req.Private); !diags.HasError() && send == nil {
+				resp.Diagnostics.Append(saveInviteSend(ctx, &invites[i], resp.Private)...)
+			}
 			resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 			return
 		}
@@ -205,8 +213,18 @@ func (r *teamInviteResource) Delete(ctx context.Context, req resource.DeleteRequ
 		resp.Diagnostics.AddError("Error listing team invitations", err.Error())
 		return
 	}
+	// Compare with the send this instance made, kept in private state, which
+	// a refresh never updates. A deposed instance left behind by an
+	// interrupted replacement is refreshed with the new send's values, so the
+	// visible attributes alone would match the replacement's invitation.
+	wantExpires, wantRole := state.ExpiresAt.ValueString(), state.Role.ValueString()
+	send, diags := loadInviteSend(ctx, req.Private)
+	resp.Diagnostics.Append(diags...)
+	if send != nil {
+		wantExpires, wantRole = send.ExpiresAt, send.Role
+	}
 	for _, inv := range invites {
-		if inv.ID == state.ID.ValueString() && (inv.ExpiresAt != state.ExpiresAt.ValueString() || inv.Role != state.Role.ValueString()) {
+		if inv.ID == state.ID.ValueString() && (inv.ExpiresAt != wantExpires || inv.Role != wantRole) {
 			resp.Diagnostics.AddWarning("Invitation left in place",
 				fmt.Sprintf("The invitation to %s was sent again after Terraform last read it (by a replacement of this resource, or from the dashboard), "+
 					"so it belongs to that newer send and was not revoked.", inv.Email))
@@ -233,4 +251,43 @@ func mapTeamInviteToState(inv *client.TeamInvite, m *teamInviteResourceModel) {
 	m.Role = types.StringValue(inv.Role)
 	m.Status = types.StringValue(invitePending)
 	m.ExpiresAt = types.StringValue(inv.ExpiresAt)
+}
+
+// inviteSendKey holds, in private state, the expiry and role of the
+// invitation this instance sent. See Delete.
+const inviteSendKey = "send"
+
+type inviteSend struct {
+	ExpiresAt string `json:"expires_at"`
+	Role      string `json:"role"`
+}
+
+type privateSetter interface {
+	SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics
+}
+
+type privateGetter interface {
+	GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics)
+}
+
+func saveInviteSend(ctx context.Context, inv *client.TeamInvite, p privateSetter) diag.Diagnostics {
+	raw, err := json.Marshal(inviteSend{ExpiresAt: inv.ExpiresAt, Role: inv.Role})
+	if err != nil {
+		var d diag.Diagnostics
+		d.AddError("Error saving invitation state", err.Error())
+		return d
+	}
+	return p.SetKey(ctx, inviteSendKey, raw)
+}
+
+func loadInviteSend(ctx context.Context, p privateGetter) (*inviteSend, diag.Diagnostics) {
+	raw, diags := p.GetKey(ctx, inviteSendKey)
+	if diags.HasError() || len(raw) == 0 {
+		return nil, diags
+	}
+	var s inviteSend
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, diags
+	}
+	return &s, diags
 }

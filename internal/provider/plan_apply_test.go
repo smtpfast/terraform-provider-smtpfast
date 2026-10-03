@@ -1310,6 +1310,44 @@ resource "smtpfast_team_invite" "test" {
 	})
 }
 
+// An invitation sent again after Terraform created it (here from the
+// dashboard; a deposed instance after an interrupted replacement looks the
+// same) belongs to that newer send. A refresh copies the new expiry into
+// state, so Delete must compare with the send it made, kept in private state.
+func TestPlanApplyTeamInviteResentIsNotRevoked(t *testing.T) {
+	skipWithoutTerraform(t)
+	api, url := newFakeTeam(t)
+	config := fakeProviderConfig(url) + `resource "smtpfast_team_invite" "test" {
+  email = "ada@example.com"
+}`
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				// Sent again out of band: new expiry, same id. The refresh in
+				// this step's plan copies the new expiry into state.
+				PreConfig: func() {
+					api.mu.Lock()
+					defer api.mu.Unlock()
+					for _, inv := range api.invites {
+						inv.ExpiresAt = "2026-12-31T00:00:00.000Z"
+					}
+				},
+				Config: config,
+				Check:  resource.TestCheckResourceAttr("smtpfast_team_invite.test", "expires_at", "2026-12-31T00:00:00.000Z"),
+			},
+		},
+		CheckDestroy: func(*terraform.State) error {
+			if len(api.invites) != 1 {
+				return fmt.Errorf("the re-sent invitation was revoked on destroy; want it left in place")
+			}
+			return nil
+		},
+	})
+}
+
 // A refused change during adoption must leave nothing in state: a tainted
 // member would be replaced on the next apply, and replacing removes them.
 func TestPlanApplyTeamMemberFailedAdoptionLeavesNoState(t *testing.T) {
