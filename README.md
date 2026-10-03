@@ -1,6 +1,6 @@
 # Terraform Provider for SMTPfast
 
-Manage your [SMTPfast](https://smtpfa.st) transactional email setup as code: sending domains, API keys, webhooks, templates, inboxes, and contact properties.
+Manage your [SMTPfast](https://smtpfa.st) transactional email setup as code: sending domains, API keys, webhooks, templates, inboxes and their labels, contact properties, segments, signup forms, and your team's members and invitations.
 
 Built with the [Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework).
 
@@ -65,6 +65,27 @@ resource "smtpfast_template" "order_confirmation" {
 
 If someone edits the template in the dashboard after your plan, the apply stops with a conflict instead of overwriting their change, and the next plan shows the difference.
 
+### Team
+
+People join a team by accepting an invitation, so the two team resources split the work. `smtpfast_team_invite` sends the invitation (a real email, and it needs a paid plan and a free seat). Once the person has accepted, `smtpfast_team_member` adopts them and manages their role:
+
+```hcl
+resource "smtpfast_team_invite" "ada" {
+  email = "ada@example.com"
+  role  = "admin"
+}
+
+# Added after Ada accepts. Destroying it removes her from the team.
+resource "smtpfast_team_member" "ada" {
+  email = "ada@example.com"
+  role  = "admin"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+```
+
 ## Usage
 
 ```hcl
@@ -87,7 +108,7 @@ Create an API key in the [SMTPfast dashboard](https://smtpfa.st) and export it:
 export SMTPFAST_API_KEY="sf_live_..."
 ```
 
-Give the key the scopes for what you manage. The default set covers domains, webhooks, templates and contact properties. Add `apikey:manage` to manage `smtpfast_api_key`, and `inbound:read` for `smtpfast_inbox`. Each resource page lists its scopes.
+Give the key the scopes for what you manage. The default set covers domains, webhooks, templates, contact properties, segments and signup forms. Add `apikey:manage` to manage `smtpfast_api_key`, `inbound:read` for `smtpfast_inbox` and `smtpfast_inbox_label`, and `team:read` and `team:manage` for `smtpfast_team_invite` and `smtpfast_team_member`. Each resource page lists its scopes.
 
 ### Resources and data sources
 
@@ -99,7 +120,13 @@ Give the key the scopes for what you manage. The default set covers domains, web
 | Resource | `smtpfast_template` | A hosted email template, published whenever Terraform changes it. |
 | Resource | `smtpfast_inbox` | An inbox for one address on a receiving domain. |
 | Resource | `smtpfast_contact_property` | A declared custom contact field with its default value. |
+| Resource | `smtpfast_inbox_label` | A named, colored label in an inbox. |
+| Resource | `smtpfast_segment` | A contact segment for targeting broadcasts (the segment, not who is in it). |
+| Resource | `smtpfast_signup_form` | A hosted signup form, with double opt-in, Turnstile and a welcome email. |
+| Resource | `smtpfast_team_invite` | An invitation to the team. Creating it emails the person. |
+| Resource | `smtpfast_team_member` | An existing member's role and billing access. Destroying it removes them from the team. |
 | Data source | `smtpfast_domain` | Look up an existing domain by ID or name. |
+| Data source | `smtpfast_segment` | Look up an existing segment by ID or name. |
 
 Full reference docs live in [`docs/`](docs/) and, once published, on the Terraform Registry. Runnable examples are in [`examples/`](examples/).
 
@@ -142,7 +169,7 @@ export SMTPFAST_API_KEY="sf_live_..."   # use a dedicated test account
 make testacc
 ```
 
-Use a test account, not production: adding a domain provisions a real sending identity, and a created API key is a real secret. The tests use randomized names and clean up after themselves. The key needs `apikey:manage` for the API key test. The inbox test needs a domain that can already receive mail, so it only runs when you set `SMTPFAST_ACC_INBOX_ADDRESS` to an address on one (and the key has `inbound:read`).
+Use a test account, not production: adding a domain provisions a real sending identity, and a created API key is a real secret. The tests use randomized names and clean up after themselves. The key needs `apikey:manage` for the API key test. The inbox test needs a domain that can already receive mail, so it only runs when you set `SMTPFAST_ACC_INBOX_ADDRESS` to an address on one (and the key has `inbound:read`). The inbox label test uses the same address. The team tests send real email, so they only run against addresses you own: `SMTPFAST_ACC_INVITE_EMAIL` is an address that is not on the team, which the invite test emails one invitation (the account needs a paid plan and a free seat), and `SMTPFAST_ACC_MEMBER_EMAIL` is a member of the team whose role the member test changes, emailing them each time, and leaves as `member` without removing them. Both need a key with `team:read` and `team:manage` created by an owner or admin.
 
 ### Spec coverage
 

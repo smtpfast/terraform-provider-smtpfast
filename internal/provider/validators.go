@@ -65,6 +65,20 @@ var webhookFormats = []string{"standard", "discord", "slack"}
 
 var variableTypes = []string{"string", "number"}
 
+var (
+	// signupFormFields are the inputs a signup form can render. email is
+	// always one of them: the API adds it at the front when it is missing.
+	signupFormFields        = []string{"email", "first_name", "last_name"}
+	defaultSignupFormFields = []string{"email", "first_name"}
+
+	// inboxLabelColors are Resend's label colors, in their order.
+	inboxLabelColors = []string{"cyan", "teal", "grass", "lime", "yellow", "orange", "iris", "plum", "crimson", "bronze", "mauve"}
+
+	teamRoles = []string{"owner", "admin", "member"}
+	// inviteRoles leaves out owner: ownership goes to an existing member.
+	inviteRoles = []string{"admin", "member"}
+)
+
 // Reserved keys, compared lowercased. Templates reserve these because the
 // renderer answers them itself; contact properties reserve the built-in
 // merge tags.
@@ -80,6 +94,9 @@ var (
 	templateAliasRegexp     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 	templateVariableRegexp  = regexp.MustCompile(`^[A-Za-z0-9_]{1,50}$`)
 	contactPropertyKeyRegex = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+	formButtonColorRegexp   = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+	segmentColorRegexp      = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+	httpURLRegexp           = regexp.MustCompile(`(?i)^https?://`)
 )
 
 // jsLength is the length the API measures: JavaScript string length, in
@@ -148,6 +165,21 @@ func trimmedLine(maxLen int) []validator.String {
 	}
 }
 
+// trimmed refuses leading or trailing whitespace, which the API would trim
+// away. Unlike trimmedLine it allows line breaks inside the value and an
+// empty value.
+func trimmed() validator.String {
+	return stringFunc{
+		desc: "must not start or end with whitespace",
+		fn: func(s string) string {
+			if strings.TrimFunc(s, isJSSpace) != s {
+				return "must not start or end with whitespace"
+			}
+			return ""
+		},
+	}
+}
+
 // plainName checks a display name in the form the API stores: the API turns
 // every whitespace run into one space and trims, so only single ASCII spaces
 // between words come back unchanged. No <, > or @.
@@ -181,6 +213,28 @@ func (v stringFunc) ValidateString(_ context.Context, req validator.StringReques
 	if msg := v.fn(req.ConfigValue.ValueString()); msg != "" {
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid value", fmt.Sprintf("%s: %s", req.Path, msg))
 	}
+}
+
+// listContains requires a list to hold value.
+type listContains struct{ value string }
+
+func (v listContains) Description(context.Context) string {
+	return fmt.Sprintf("must include %q", v.value)
+}
+
+func (v listContains) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
+
+func (v listContains) ValidateList(_ context.Context, req validator.ListRequest, resp *validator.ListResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	for _, e := range req.ConfigValue.Elements() {
+		s, ok := e.(types.String)
+		if !ok || s.IsUnknown() || s.ValueString() == v.value {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(req.Path, "Invalid value", fmt.Sprintf("%s: must include %q", req.Path, v.value))
 }
 
 // notReserved refuses keys in reserved, compared case-insensitively.

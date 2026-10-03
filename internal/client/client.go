@@ -1,6 +1,7 @@
 // Package client is a small HTTP client for the SMTPfast (smtpfa.st) API.
 // It wraps the v1 endpoints the Terraform provider needs: sending domains,
-// API keys, webhooks, templates, inboxes and contact properties.
+// API keys, webhooks, templates, inboxes and their labels, contact
+// properties, segments, signup forms, and team members and invitations.
 package client
 
 import (
