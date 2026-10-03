@@ -6,7 +6,7 @@ description: |-
   An invitation to join the team. Creating it sends a real email from SMTPfast to the address, with a link that is valid for 7 days. The person signs in with that address to accept.
   Inviting needs a paid plan and a free seat: pending invitations count against the plan's member limit. The API also limits invitations to 20 an hour per inviter and 3 an hour per address.
   An invitation cannot be changed, only replaced: changing email or role revokes it and sends a new one, which is another email. Destroying a pending invitation revokes it, so its link stops working.
-  Once the person accepts, status turns to accepted and the resource stays in state with nothing to change. Destroying it then does nothing: the person stays on the team. Manage their role with smtpfast_team_member, which also removes them on destroy.
+  Once the person accepts, status turns to accepted and stays that way, even if they later leave or are removed: Terraform never re-invites anyone on its own (to invite them again, replace the resource with terraform apply -replace). Destroying an accepted invitation does nothing, and the person stays on the team. Manage their role with smtpfast_team_member, which also removes them on destroy.
   An invitation that expires unaccepted, or is revoked in the dashboard, is gone from the API: the next plan creates it again, and applying sends a new email.
   Needs a provider API key with the team:read and team:manage scopes, created by a team owner or admin.
 ---
@@ -19,7 +19,7 @@ Inviting needs a paid plan and a free seat: pending invitations count against th
 
 An invitation cannot be changed, only replaced: changing `email` or `role` revokes it and sends a new one, which is another email. Destroying a pending invitation revokes it, so its link stops working.
 
-Once the person accepts, `status` turns to `accepted` and the resource stays in state with nothing to change. Destroying it then does nothing: the person stays on the team. Manage their role with `smtpfast_team_member`, which also removes them on destroy.
+Once the person accepts, `status` turns to `accepted` and stays that way, even if they later leave or are removed: Terraform never re-invites anyone on its own (to invite them again, replace the resource with `terraform apply -replace`). Destroying an accepted invitation does nothing, and the person stays on the team. Manage their role with `smtpfast_team_member`, which also removes them on destroy.
 
 An invitation that expires unaccepted, or is revoked in the dashboard, is gone from the API: the next plan creates it again, and applying sends a new email.
 

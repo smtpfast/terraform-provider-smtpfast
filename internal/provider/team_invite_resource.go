@@ -59,8 +59,9 @@ func (r *teamInviteResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"The API also limits invitations to 20 an hour per inviter and 3 an hour per address.\n\n" +
 			"An invitation cannot be changed, only replaced: changing `email` or `role` revokes it and sends a new one, which is another email. " +
 			"Destroying a pending invitation revokes it, so its link stops working.\n\n" +
-			"Once the person accepts, `status` turns to `accepted` and the resource stays in state with nothing to change. " +
-			"Destroying it then does nothing: the person stays on the team. Manage their role with `smtpfast_team_member`, which also removes them on destroy.\n\n" +
+			"Once the person accepts, `status` turns to `accepted` and stays that way, even if they later leave or are removed: Terraform never re-invites anyone on its own " +
+			"(to invite them again, replace the resource with `terraform apply -replace`). Destroying an accepted invitation does nothing, and the person stays on the team. " +
+			"Manage their role with `smtpfast_team_member`, which also removes them on destroy.\n\n" +
 			"An invitation that expires unaccepted, or is revoked in the dashboard, is gone from the API: the next plan creates it again, and applying sends a new email.\n\n" +
 			"Needs a provider API key with the `team:read` and `team:manage` scopes, created by a team owner or admin.",
 		Attributes: map[string]schema.Attribute{
@@ -135,6 +136,13 @@ func (r *teamInviteResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
+	// Accepted is final. If the person later leaves or is removed, the
+	// invitation stays accepted rather than being planned again, so Terraform
+	// never re-invites someone on its own.
+	if state.Status.ValueString() == inviteAccepted {
+		return
+	}
+
 	invites, err := r.client.ListTeamInvites(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing team invitations", err.Error())
@@ -186,16 +194,22 @@ func (r *teamInviteResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
-	// Inviting an address with a pending invitation reuses that invitation,
-	// so with create_before_destroy the replacement can already hold this
-	// id. Leave it alone when its role is no longer the one in state.
+	// Inviting an address that has a pending invitation sends that same
+	// invitation again: same id, new link and expiry (and the new role). So
+	// the invitation under this id may no longer be the send this instance
+	// made, for example when its create_before_destroy replacement has just
+	// sent it again. Revoke it only while its expiry and role are still the
+	// ones in state.
 	invites, err := r.client.ListTeamInvites(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing team invitations", err.Error())
 		return
 	}
 	for _, inv := range invites {
-		if inv.ID == state.ID.ValueString() && inv.Role != state.Role.ValueString() {
+		if inv.ID == state.ID.ValueString() && (inv.ExpiresAt != state.ExpiresAt.ValueString() || inv.Role != state.Role.ValueString()) {
+			resp.Diagnostics.AddWarning("Invitation left in place",
+				fmt.Sprintf("The invitation to %s was sent again after Terraform last read it (by a replacement of this resource, or from the dashboard), "+
+					"so it belongs to that newer send and was not revoked.", inv.Email))
 			return
 		}
 	}

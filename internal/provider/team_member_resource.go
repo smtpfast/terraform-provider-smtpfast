@@ -216,33 +216,36 @@ func (r *teamMemberResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	// Adopted: record the member before changing anything, so a refused
-	// change never leaves them unmanaged.
-	desired := plan
-	mapTeamMemberToState(member, &plan)
-	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	update, problem := teamMemberChanges(&desired, member)
+	// State is only written once every step has worked. A member recorded
+	// before a failed change would be tainted, and replacing a tainted member
+	// removes them from the team. So on any failure here, return without
+	// state: the person stays on the team, and the next apply adopts again.
+	update, problem := teamMemberChanges(&plan, member)
 	if problem != "" {
 		resp.Diagnostics.AddAttributeError(path.Root("can_manage_billing"), "Owners always manage billing", problem)
 		return
 	}
 	if update != nil {
+		// One request, which the API applies whole or not at all: role and
+		// billing are checked before either is written.
 		if err := r.client.UpdateTeamMember(ctx, member.ID, *update); err != nil {
-			resp.Diagnostics.AddError("Error updating team member", err.Error())
+			resp.Diagnostics.AddError("Error updating team member",
+				fmt.Sprintf("Terraform did not change or start managing %s: they stay on the team as %s, with billing access %t. "+
+					"Fix the problem below and apply again.\n\n%s", member.Email, member.Role, member.CanManageBilling, err.Error()))
 			return
 		}
-		if member, err = r.findMember(ctx, member.ID); err != nil {
-			resp.Diagnostics.AddError("Error reading team member after update", err.Error())
+		updated, err := r.findMember(ctx, member.ID)
+		if err != nil {
+			resp.Diagnostics.AddError("Error reading team member after update",
+				fmt.Sprintf("The role or billing change for %s was applied, but reading them back failed, so Terraform did not start managing them. "+
+					"They stay on the team; apply again to adopt them.\n\n%s", member.Email, err.Error()))
 			return
 		}
+		member = updated
 	}
 
-	mapTeamMemberToState(member, &desired)
-	resp.Diagnostics.Append(resp.State.Set(ctx, desired)...)
+	mapTeamMemberToState(member, &plan)
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *teamMemberResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

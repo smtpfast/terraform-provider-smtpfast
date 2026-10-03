@@ -1219,3 +1219,141 @@ func TestPlanApplyTeamMemberErrors(t *testing.T) {
 		},
 	})
 }
+
+// Accepted is final: when the person later leaves or is removed, Terraform
+// must not send them a new invitation by itself.
+func TestPlanApplyTeamInviteStaysAcceptedAfterRemoval(t *testing.T) {
+	skipWithoutTerraform(t)
+	api, url := newFakeTeam(t)
+	config := fakeProviderConfig(url) + `resource "smtpfast_team_invite" "test" {
+  email = "ada@example.com"
+  role  = "admin"
+}`
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				PreConfig: func() { api.acceptInvite("ada@example.com") },
+				Config:    config,
+				Check:     resource.TestCheckResourceAttr("smtpfast_team_invite.test", "status", "accepted"),
+			},
+			{
+				PreConfig: func() {
+					api.mu.Lock()
+					defer api.mu.Unlock()
+					for id, m := range api.members {
+						if m.Email == "ada@example.com" {
+							delete(api.members, id)
+						}
+					}
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("smtpfast_team_invite.test", "status", "accepted"),
+					func(*terraform.State) error {
+						for _, inv := range api.invites {
+							if !inv.Accepted {
+								return fmt.Errorf("a new invitation was sent to %s", inv.Email)
+							}
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+// With create_before_destroy, the replacement's create re-sends the same
+// invitation (same id and role, new expiry). Destroying the old instance must
+// not then revoke it.
+func TestPlanApplyTeamInviteCreateBeforeDestroy(t *testing.T) {
+	skipWithoutTerraform(t)
+	api, url := newFakeTeam(t)
+	config := func(trigger string) string {
+		return fakeProviderConfig(url) + `resource "terraform_data" "trigger" {
+  input = "` + trigger + `"
+}
+
+resource "smtpfast_team_invite" "test" {
+  email = "ada@example.com"
+
+  lifecycle {
+    create_before_destroy = true
+    replace_triggered_by  = [terraform_data.trigger]
+  }
+}`
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config("1")},
+			{
+				Config: config("2"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("smtpfast_team_invite.test", plancheck.ResourceActionCreateBeforeDestroy)},
+				},
+				Check: func(*terraform.State) error {
+					if len(api.invites) != 1 {
+						return fmt.Errorf("want the re-sent invitation to stay pending, have %d invitations", len(api.invites))
+					}
+					return nil
+				},
+			},
+		},
+	})
+}
+
+// A refused change during adoption must leave nothing in state: a tainted
+// member would be replaced on the next apply, and replacing removes them.
+func TestPlanApplyTeamMemberFailedAdoptionLeavesNoState(t *testing.T) {
+	skipWithoutTerraform(t)
+	api, url := newFakeTeam(t)
+	api.members["mem_grace"] = &fakeMember{ID: "mem_grace", UserID: "usr_grace", Email: "grace@example.com", Role: "member", CreatedAt: "2026-09-02T10:00:00.000Z"}
+	api.callerRole = "admin"
+	provider := fakeProviderConfig(url)
+	graceUntouched := func(*terraform.State) error {
+		m, ok := api.members["mem_grace"]
+		if !ok {
+			return fmt.Errorf("grace@example.com was removed from the team")
+		}
+		if m.Role != "admin" || m.Billing {
+			return fmt.Errorf("grace@example.com is %s with billing %t, want admin without billing", m.Role, m.Billing)
+		}
+		return nil
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// An admin's key cannot grant billing access.
+				Config: provider + `resource "smtpfast_team_member" "test" {
+  email              = "grace@example.com"
+  role               = "admin"
+  can_manage_billing = true
+}`,
+				ExpectError: regexp.MustCompile(`Only an owner can change billing access`),
+			},
+			{
+				// Nothing was recorded, so this adopts again instead of
+				// replacing (which would remove her).
+				PreConfig: func() { api.members["mem_grace"].Role = "admin" },
+				Config: provider + `resource "smtpfast_team_member" "test" {
+  email = "grace@example.com"
+  role  = "admin"
+}`,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("smtpfast_team_member.test", plancheck.ResourceActionCreate)},
+				},
+				Check: graceUntouched,
+			},
+		},
+	})
+}

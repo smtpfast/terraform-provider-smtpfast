@@ -1005,6 +1005,8 @@ func (f *fakeAPI) serveInvites(w http.ResponseWriter, method, id string, body ma
 			inv = &fakeInvite{ID: f.nextID("inv"), Email: email, CreatedAt: f.now()}
 			f.invites[inv.ID] = inv
 		}
+		// Every send gets a new link and expiry, as the real upsert does.
+		f.now()
 		inv.Role, inv.Accepted, inv.Expired = role, false, false
 		inv.ExpiresAt = f.clock.Add(7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
 		writeJSON(w, http.StatusCreated, map[string]any{"object": "team_invite", "id": inv.ID, "email": inv.Email, "role": inv.Role, "expires_at": inv.ExpiresAt})
