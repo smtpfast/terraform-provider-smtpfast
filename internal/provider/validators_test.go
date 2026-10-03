@@ -117,7 +117,7 @@ func TestPlainEmailAddressValidator(t *testing.T) {
 			t.Errorf("%q should be valid", ok)
 		}
 	}
-	for _, bad := range []string{"Support@example.com", "Ada <ada@example.com>", "ada", "@example.com", "a@b@example.com", "ada@localhost"} {
+	for _, bad := range []string{"Support@example.com", "Ada <ada@example.com>", "ada", "@example.com", "a@b@example.com", "ada@localhost", "\u00a0support@example.com", "sup port@example.com"} {
 		if runStringValidator(plainEmailAddress(), bad) {
 			t.Errorf("%q should be invalid", bad)
 		}

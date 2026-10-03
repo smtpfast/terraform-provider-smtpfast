@@ -228,7 +228,7 @@ func plainEmailAddress() validator.String {
 				return fmt.Sprintf("use lowercase (%q): the API stores addresses in lowercase", strings.ToLower(s))
 			}
 			at := strings.LastIndex(s, "@")
-			if at < 1 || strings.ContainsAny(s, " \t\r\n<>,;\"") || strings.Count(s, "@") != 1 {
+			if at < 1 || strings.ContainsAny(s, "<>,;\"") || strings.IndexFunc(s, isJSSpace) >= 0 || strings.Count(s, "@") != 1 {
 				return fmt.Sprintf("%q must be a plain address such as support@example.com, without a display name", s)
 			}
 			if host := s[at+1:]; len(host) > 253 || !domainNameRegexp.MatchString(host) {
