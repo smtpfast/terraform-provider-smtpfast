@@ -3,25 +3,29 @@
 page_title: "smtpfast_api_key Resource - smtpfast"
 subcategory: ""
 description: |-
-  An SMTPfast API key. The full secret (key) is only returned once, on create, and stored in state. Treat your state as sensitive. API keys are immutable; changing name or scopes forces a new key.
+  An SMTPfast API key. The full secret (key) is only returned once, on create, and stored in state. Treat your state as sensitive. name and scopes update in place and the secret stays the same; scope changes apply on the key's next request.
+  Managing API keys needs a provider API key with the apikey:manage scope, created by a team owner or admin.
 ---
 
 # smtpfast_api_key (Resource)
 
-An SMTPfast API key. The full secret (`key`) is only returned once, on create, and stored in state. Treat your state as sensitive. API keys are immutable; changing `name` or `scopes` forces a new key.
+An SMTPfast API key. The full secret (`key`) is only returned once, on create, and stored in state. Treat your state as sensitive. `name` and `scopes` update in place and the secret stays the same; scope changes apply on the key's next request.
+
+Managing API keys needs a provider API key with the `apikey:manage` scope, created by a team owner or admin.
 
 ## Example Usage
 
 ```terraform
-# A full-access key.
+# A key with the API's default scopes: everything except logs:read,
+# inbound:read, inbound:delete, team:read, team:manage and apikey:manage.
 resource "smtpfast_api_key" "ci" {
   name = "ci-pipeline"
 }
 
-# A scoped key that can only send email.
+# A key that can only send email and look up what it sent.
 resource "smtpfast_api_key" "send_only" {
   name   = "app-send-only"
-  scopes = ["emails:send"]
+  scopes = ["email:send", "email:read"]
 }
 
 # The secret is only available at create time. Handle it as a sensitive value.
@@ -36,15 +40,27 @@ output "ci_api_key" {
 
 ### Required
 
-- `name` (String) Human-readable name for the key. Changing this forces a new resource.
+- `name` (String) Human-readable name for the key, up to 100 characters. Updates in place.
 
 ### Optional
 
-- `scopes` (List of String) Optional scopes to restrict the key (e.g. `emails:send`, `domains:read`). Omit for full access. Changing this forces a new resource.
+- `scopes` (List of String) What the key may do. One or more of `email:send`, `email:read`, `domain:read`, `domain:write`, `contact:read`, `contact:write`, `form:read`, `form:write`, `webhook:read`, `webhook:write`, `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage`, `apikey:manage`. When omitted, the key gets the API's default set: every scope except `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage` and `apikey:manage`. Order does not matter. Updates in place, and changes made outside Terraform show up as drift.
 
 ### Read-Only
 
 - `created_at` (String) Creation timestamp (RFC 3339).
 - `id` (String) Unique identifier of the API key.
-- `key` (String, Sensitive) The full API key secret. Only known immediately after creation.
+- `key` (String, Sensitive) The full API key secret. Only known immediately after creation; empty after an import.
 - `prefix` (String) Non-secret prefix of the key, useful for identifying it.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import by API key id. The secret is only returned on create, so `key` stays
+# empty after an import.
+terraform import smtpfast_api_key.ci key_abc123
+```

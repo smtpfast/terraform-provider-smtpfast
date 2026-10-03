@@ -3,18 +3,28 @@
 page_title: "smtpfast_domain Resource - smtpfast"
 subcategory: ""
 description: |-
-  A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine dns_records with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain in one apply.
+  A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine dns_records with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain from one configuration.
+  The records are only known once the domain exists, so a for_each over them cannot plan before that: on the first run, apply the domain alone with -target, then apply everything. After that, turning receiving on or off keeps dns_records known at plan time.
+  Needs a provider API key with the domain:read and domain:write scopes, created by a team owner or admin.
 ---
 
 # smtpfast_domain (Resource)
 
-A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine `dns_records` with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain in one apply.
+A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine `dns_records` with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain from one configuration.
+
+The records are only known once the domain exists, so a `for_each` over them cannot plan before that: on the first run, apply the domain alone with `-target`, then apply everything. After that, turning receiving on or off keeps `dns_records` known at plan time.
+
+Needs a provider API key with the `domain:read` and `domain:write` scopes, created by a team owner or admin.
 
 ## Example Usage
 
 ```terraform
-# Register a sending domain and publish its DNS records to Cloudflare in one
-# apply. Swap cloudflare_record for aws_route53_record, etc. as needed.
+# Register a sending domain and publish its DNS records to Cloudflare. Swap
+# cloudflare_record for aws_route53_record, etc. as needed.
+#
+# The records are only known once the domain exists, so on the first run apply
+# the domain alone (terraform apply -target=smtpfast_domain.example), then
+# apply everything.
 
 resource "smtpfast_domain" "example" {
   domain = "mail.example.com"
@@ -23,11 +33,12 @@ resource "smtpfast_domain" "example" {
 resource "cloudflare_record" "smtpfast" {
   for_each = { for idx, rec in smtpfast_domain.example.dns_records : idx => rec }
 
-  zone_id = var.cloudflare_zone_id
-  type    = each.value.type
-  name    = each.value.name
-  content = each.value.value
-  proxied = false
+  zone_id  = var.cloudflare_zone_id
+  type     = each.value.type
+  name     = each.value.name
+  content  = each.value.value
+  priority = each.value.priority # set on MX records only, null otherwise
+  proxied  = false
 }
 
 output "domain_status" {
@@ -40,11 +51,11 @@ output "domain_status" {
 
 ### Required
 
-- `domain` (String) The domain name to send from, e.g. `mail.example.com`. Changing this forces a new resource.
+- `domain` (String) The domain name to send from, e.g. `mail.example.com`, in lowercase and without a trailing dot (the form the API stores). Changing this forces a new resource.
 
 ### Optional
 
-- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must already be verified for sending, so set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.
+- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must be verified for sending, or be a subdomain of a domain that is already verified on the team. For a brand-new domain that is not such a subdomain, set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.
 
 ### Read-Only
 
@@ -62,3 +73,14 @@ Read-Only:
 - `priority` (Number) Priority, set on MX records only.
 - `type` (String) DNS record type (CNAME, TXT, MX).
 - `value` (String) Record value.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import by domain id.
+terraform import smtpfast_domain.example dom_xyz789
+```

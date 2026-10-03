@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -12,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/smtpfast/terraform-provider-smtpfast/internal/client"
@@ -21,7 +24,12 @@ var (
 	_ resource.Resource                = &domainResource{}
 	_ resource.ResourceWithConfigure   = &domainResource{}
 	_ resource.ResourceWithImportState = &domainResource{}
+	_ resource.ResourceWithModifyPlan  = &domainResource{}
 )
+
+// receivingMXKey is the private state key holding the MX record receiving
+// needs, as the last read reported it.
+const receivingMXKey = "receiving_mx"
 
 // NewDomainResource returns a new smtpfast_domain resource.
 func NewDomainResource() resource.Resource {
@@ -56,7 +64,9 @@ func (r *domainResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine `dns_records` with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain in one apply.",
+		MarkdownDescription: "A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine `dns_records` with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain from one configuration.\n\n" +
+			"The records are only known once the domain exists, so a `for_each` over them cannot plan before that: on the first run, apply the domain alone with `-target`, then apply everything. After that, turning receiving on or off keeps `dns_records` known at plan time.\n\n" +
+			"Needs a provider API key with the `domain:read` and `domain:write` scopes, created by a team owner or admin.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Unique identifier of the domain.",
@@ -66,8 +76,9 @@ func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"domain": schema.StringAttribute{
-				MarkdownDescription: "The domain name to send from, e.g. `mail.example.com`. Changing this forces a new resource.",
+				MarkdownDescription: "The domain name to send from, e.g. `mail.example.com`, in lowercase and without a trailing dot (the form the API stores). Changing this forces a new resource.",
 				Required:            true,
+				Validators:          []validator.String{domainName()},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -77,7 +88,7 @@ func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"receiving_enabled": schema.BoolAttribute{
-				MarkdownDescription: "Turn inbound email on for this domain (paid plans). The domain must already be verified for sending, so set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.",
+				MarkdownDescription: "Turn inbound email on for this domain (paid plans). The domain must be verified for sending, or be a subdomain of a domain that is already verified on the team. For a brand-new domain that is not such a subdomain, set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
@@ -150,6 +161,7 @@ func (r *domainResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	resp.Diagnostics.Append(r.mapToState(ctx, domain, &plan)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	resp.Diagnostics.Append(saveReceivingMX(ctx, domain, resp.Private)...)
 }
 
 func (r *domainResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -171,6 +183,7 @@ func (r *domainResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	resp.Diagnostics.Append(r.mapToState(ctx, domain, &state)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
+	resp.Diagnostics.Append(saveReceivingMX(ctx, domain, resp.Private)...)
 }
 
 // Update handles the receiving toggle; the domain name itself forces replacement.
@@ -195,6 +208,81 @@ func (r *domainResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	resp.Diagnostics.Append(r.mapToState(ctx, domain, &plan)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	resp.Diagnostics.Append(saveReceivingMX(ctx, domain, resp.Private)...)
+}
+
+// ModifyPlan predicts dns_records when receiving is turned on or off, so a
+// for_each over them stays known at plan time. Turning receiving on appends
+// the MX record the last read reported; turning it off removes it. Without
+// that record (no refresh yet), dns_records stays unknown.
+func (r *domainResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan, state domainResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !plan.Domain.Equal(state.Domain) || !plan.DNSRecords.IsUnknown() || state.DNSRecords.IsNull() || state.DNSRecords.IsUnknown() ||
+		plan.ReceivingEnabled.IsUnknown() || plan.ReceivingEnabled.Equal(state.ReceivingEnabled) {
+		return
+	}
+
+	var records []dnsRecordModel
+	resp.Diagnostics.Append(state.DNSRecords.ElementsAs(ctx, &records, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// The receiving MX sits on the domain itself; the MAIL FROM MX is on its
+	// bounce subdomain and stays.
+	kept := make([]dnsRecordModel, 0, len(records)+1)
+	for _, rec := range records {
+		if rec.Type.ValueString() == "MX" && rec.Name.ValueString() == state.Domain.ValueString() {
+			continue
+		}
+		kept = append(kept, rec)
+	}
+	if plan.ReceivingEnabled.ValueBool() {
+		raw, diags := req.Private.GetKey(ctx, receivingMXKey)
+		resp.Diagnostics.Append(diags...)
+		var mx client.DNSRecord
+		if len(raw) == 0 || json.Unmarshal(raw, &mx) != nil || mx.Value == "" || mx.Priority == nil {
+			return
+		}
+		name := mx.Name
+		if name == "" {
+			name = state.Domain.ValueString()
+		}
+		kept = append(kept, dnsRecordModel{
+			Type:     types.StringValue("MX"),
+			Name:     types.StringValue(name),
+			Value:    types.StringValue(mx.Value),
+			Priority: types.Int64Value(*mx.Priority),
+		})
+	}
+	list, diags := types.ListValueFrom(ctx, types.ObjectType{AttrTypes: dnsRecordAttrTypes}, kept)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("dns_records"), list)...)
+}
+
+// saveReceivingMX keeps the MX record receiving needs in private state, for
+// ModifyPlan.
+func saveReceivingMX(ctx context.Context, d *client.Domain, private interface {
+	SetKey(context.Context, string, []byte) diag.Diagnostics
+}) diag.Diagnostics {
+	if d.Receiving == nil || d.Receiving.MXRecord == nil {
+		return nil
+	}
+	raw, err := json.Marshal(d.Receiving.MXRecord)
+	if err != nil {
+		return nil
+	}
+	return private.SetKey(ctx, receivingMXKey, raw)
 }
 
 func (r *domainResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -235,10 +323,11 @@ func (r *domainResource) mapToState(ctx context.Context, d *client.Domain, m *do
 
 // receivingErrorHint turns the API's receiving errors into actionable text.
 func receivingErrorHint(err error) string {
-	if apiErr, ok := err.(*client.APIError); ok {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
 		case 400:
-			return err.Error() + ". Receiving needs a domain that is verified for sending: keep receiving_enabled unset or false until status is \"verified\", then set it to true."
+			return err.Error() + ". Receiving needs a domain that is verified for sending, or a subdomain of a verified domain: keep receiving_enabled unset or false until status is \"verified\", then set it to true."
 		case 402:
 			return err.Error() + ". Inbound email is available on paid plans."
 		case 403:

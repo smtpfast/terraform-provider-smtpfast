@@ -41,7 +41,8 @@ func (p *smtpfastProvider) Metadata(_ context.Context, _ provider.MetadataReques
 
 func (p *smtpfastProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "The SMTPfast provider manages resources on [SMTPfast](https://smtpfa.st), a transactional email API: sending domains, API keys, and webhooks.",
+		MarkdownDescription: "The SMTPfast provider manages resources on [SMTPfast](https://smtpfa.st), a transactional email API: sending domains, API keys, webhooks, templates, inboxes and contact properties.\n\n" +
+			"Each resource needs the provider's API key to hold the scopes its page lists. A key created without scopes gets the default set, which does not include `apikey:manage` or `inbound:read`: managing `smtpfast_api_key` and `smtpfast_inbox` needs a key created with them.",
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{
 				MarkdownDescription: "SMTPfast API key. Can also be set with the `SMTPFAST_API_KEY` environment variable. Create one in the [SMTPfast dashboard](https://smtpfa.st).",
@@ -103,6 +104,9 @@ func (p *smtpfastProvider) Resources(_ context.Context) []func() resource.Resour
 		NewDomainResource,
 		NewAPIKeyResource,
 		NewWebhookResource,
+		NewTemplateResource,
+		NewInboxResource,
+		NewContactPropertyResource,
 	}
 }
 
