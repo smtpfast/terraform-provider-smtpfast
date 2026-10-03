@@ -26,6 +26,36 @@
       "PATCH /v1/inboxes/{id}",
       "DELETE /v1/inboxes/{id}"
     ],
+    "smtpfast_inbox_label": [
+      "GET /v1/inboxes/{inbox_id}/labels",
+      "POST /v1/inboxes/{inbox_id}/labels",
+      "PATCH /v1/inboxes/{inbox_id}/labels/{label_id}",
+      "DELETE /v1/inboxes/{inbox_id}/labels/{label_id}"
+    ],
+    "smtpfast_segment": [
+      "POST /v1/segments",
+      "GET /v1/segments",
+      "GET /v1/segments/{id}",
+      "PATCH /v1/segments/{id}",
+      "DELETE /v1/segments/{id}"
+    ],
+    "smtpfast_signup_form": [
+      "POST /v1/forms",
+      "GET /v1/forms/{id}",
+      "PATCH /v1/forms/{id}",
+      "DELETE /v1/forms/{id}"
+    ],
+    "smtpfast_team_invite": [
+      "POST /v1/team/invites",
+      "GET /v1/team/invites",
+      "DELETE /v1/team/invites/{id}",
+      "GET /v1/team/members"
+    ],
+    "smtpfast_team_member": [
+      "GET /v1/team/members",
+      "PATCH /v1/team/members/{id}",
+      "DELETE /v1/team/members/{id}"
+    ],
     "smtpfast_template": [
       "POST /v1/templates",
       "GET /v1/templates/{id}",
@@ -95,6 +125,7 @@
       "reason": "List endpoints. These resources read their object by ID.",
       "rules": [
         "GET /v1/contact-properties",
+        "GET /v1/forms",
         "GET /v1/inboxes",
         "GET /v1/templates",
         "GET /v1/webhooks"
