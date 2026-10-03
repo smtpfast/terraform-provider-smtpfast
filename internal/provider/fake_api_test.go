@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +33,17 @@ type fakeAPI struct {
 	inboxes    map[string]*fakeInbox
 	properties map[string]*fakeProperty
 	domains    map[string]*fakeDomain
+	forms      map[string]*fakeForm
+	segments   map[string]*fakeSegment
+	labels     map[string]*fakeLabel
+	members    map[string]*fakeMember
+	invites    map[string]*fakeInvite
+
+	// callerRole is the team role of the API key's user ("owner", "admin" or
+	// "member"), and callerMemberID their membership. freeTeam turns off
+	// inviting, which needs a paid plan.
+	callerRole, callerMemberID string
+	freeTeam                   bool
 
 	// conflictNextTemplateWrite simulates an edit made in the dashboard right
 	// before the next template update or publish arrives.
@@ -70,6 +83,34 @@ type fakeDomain struct {
 	Receiving          bool
 }
 
+type fakeForm struct {
+	ID, Name, ButtonText, ButtonColor, SuccessMessage, CreatedAt, UpdatedAt string
+	Fields                                                                  []string
+	DoubleOptIn, CaptchaEnabled, BlockDisposable, Active, WelcomeEnabled    bool
+	RedirectURL, SiteKey, SecretKey                                         *string
+	ConfirmationFrom, WelcomeFrom, WelcomeSubject, WelcomeMarkdown          *string
+}
+
+type fakeSegment struct {
+	ID, Name, CreatedAt, UpdatedAt string
+	Description, Color             *string
+}
+
+type fakeLabel struct {
+	ID, InboxID, Name, Color, CreatedAt string
+}
+
+type fakeMember struct {
+	ID, UserID, Email, Role, CreatedAt string
+	Name                               *string
+	Billing                            bool
+}
+
+type fakeInvite struct {
+	ID, Email, Role, CreatedAt, ExpiresAt string
+	Accepted, Expired                     bool
+}
+
 // newFakeAPI starts the fake API and returns it with its base URL.
 func newFakeAPI(t *testing.T) (*fakeAPI, string) {
 	t.Helper()
@@ -81,6 +122,12 @@ func newFakeAPI(t *testing.T) (*fakeAPI, string) {
 		inboxes:    map[string]*fakeInbox{},
 		properties: map[string]*fakeProperty{},
 		domains:    map[string]*fakeDomain{},
+		forms:      map[string]*fakeForm{},
+		segments:   map[string]*fakeSegment{},
+		labels:     map[string]*fakeLabel{},
+		members:    map[string]*fakeMember{},
+		invites:    map[string]*fakeInvite{},
+		callerRole: "owner",
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
@@ -156,11 +203,36 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.serveTemplates(w, r.Method, id, action, body)
 	case "inboxes":
+		if len(parts) > 2 && parts[2] == "labels" {
+			labelID := ""
+			if len(parts) > 3 {
+				labelID = parts[3]
+			}
+			f.serveInboxLabels(w, r.Method, id, labelID, body)
+			return
+		}
 		f.serveInboxes(w, r.Method, id, body)
 	case "contact-properties":
 		f.serveProperties(w, r.Method, id, body)
 	case "domains":
 		f.serveDomains(w, r.Method, id, body)
+	case "forms":
+		f.serveForms(w, r.Method, id, body)
+	case "segments":
+		f.serveSegments(w, r.Method, id, body)
+	case "team":
+		sub := ""
+		if len(parts) > 2 {
+			sub = parts[2]
+		}
+		switch id {
+		case "invites":
+			f.serveInvites(w, r.Method, sub, body)
+		case "members":
+			f.serveMembers(w, r.Method, sub, body)
+		default:
+			writeError(w, http.StatusNotFound, "Not found")
+		}
 	default:
 		writeError(w, http.StatusNotFound, "Not found")
 	}
@@ -538,5 +610,514 @@ func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body ma
 	case http.MethodDelete:
 		delete(f.domains, id)
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "domain": d.Domain})
+	}
+}
+
+// fakeNullable applies a nullable text field the way the forms and segments
+// APIs do: absent leaves it, null or "" clears it, anything else is stored
+// (trimmed when trim is set, and cleared when that leaves nothing).
+func fakeNullable(body map[string]any, key string, dst **string, trim bool) {
+	v, ok := body[key]
+	if !ok {
+		return
+	}
+	str, _ := v.(string)
+	if trim {
+		str = strings.TrimSpace(str)
+	}
+	if str == "" {
+		*dst = nil
+		return
+	}
+	*dst = &str
+}
+
+func (f *fakeAPI) serveForms(w http.ResponseWriter, method, id string, body map[string]any) {
+	// The create and list shape: no confirmation or welcome email fields.
+	base := func(fm *fakeForm) map[string]any {
+		return map[string]any{
+			"object": "signup_form", "id": fm.ID, "name": fm.Name, "fields": fm.Fields,
+			"button_text": fm.ButtonText, "button_color": fm.ButtonColor, "success_message": fm.SuccessMessage,
+			"double_opt_in": fm.DoubleOptIn, "redirect_url": fm.RedirectURL, "captcha_enabled": fm.CaptchaEnabled,
+			"captcha_provider": "turnstile", "turnstile_site_key": fm.SiteKey, "turnstile_secret_configured": fm.SecretKey != nil,
+			"block_disposable_emails": fm.BlockDisposable, "active": fm.Active, "created_at": fm.CreatedAt, "updated_at": fm.UpdatedAt,
+		}
+	}
+	full := func(fm *fakeForm) map[string]any {
+		out := base(fm)
+		out["confirmation_email_from"] = fm.ConfirmationFrom
+		out["welcome_email_enabled"] = fm.WelcomeEnabled
+		out["welcome_email_from"] = fm.WelcomeFrom
+		out["welcome_email_subject"] = fm.WelcomeSubject
+		out["welcome_email_markdown"] = fm.WelcomeMarkdown
+		out["welcome_stats"] = map[string]any{"sent": 0, "skipped": 0, "delivered": 0, "opened": 0, "clicked": 0}
+		out["pending_confirmations_count"] = 0
+		out["recent_pending_confirmations"] = []any{}
+		return out
+	}
+	// apply mirrors parseFormInput. Create ignores the email settings.
+	apply := func(fm *fakeForm, create bool) {
+		if v, ok := body["name"].(string); ok {
+			fm.Name = strings.TrimSpace(v)
+		}
+		if raw, ok := body["fields"]; ok {
+			fields := stringsOf(raw)
+			if !slices.Contains(fields, "email") {
+				fields = append([]string{"email"}, fields...)
+			}
+			fm.Fields = fields
+		}
+		if v, ok := body["buttonText"].(string); ok {
+			fm.ButtonText = strings.TrimSpace(v)
+		}
+		if v, ok := body["buttonColor"].(string); ok {
+			fm.ButtonColor = v
+		}
+		if v, ok := body["successMessage"].(string); ok {
+			fm.SuccessMessage = strings.TrimSpace(v)
+		}
+		for key, dst := range map[string]*bool{"doubleOptIn": &fm.DoubleOptIn, "captchaEnabled": &fm.CaptchaEnabled, "blockDisposableEmails": &fm.BlockDisposable, "active": &fm.Active} {
+			if v, ok := body[key].(bool); ok {
+				*dst = v
+			}
+		}
+		fakeNullable(body, "redirectUrl", &fm.RedirectURL, true)
+		fakeNullable(body, "turnstileSiteKey", &fm.SiteKey, true)
+		fakeNullable(body, "turnstileSecretKey", &fm.SecretKey, true)
+		if create {
+			return
+		}
+		if v, ok := body["welcomeEmailEnabled"].(bool); ok {
+			fm.WelcomeEnabled = v
+		}
+		fakeNullable(body, "confirmationEmailFrom", &fm.ConfirmationFrom, true)
+		fakeNullable(body, "welcomeEmailFrom", &fm.WelcomeFrom, true)
+		fakeNullable(body, "welcomeEmailSubject", &fm.WelcomeSubject, true)
+		fakeNullable(body, "welcomeEmailMarkdown", &fm.WelcomeMarkdown, false)
+	}
+	captchaError := "turnstileSiteKey and turnstileSecretKey are required when captchaEnabled is true"
+
+	if method == http.MethodPost && id == "" {
+		if _, ok := body["name"].(string); !ok {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if len(f.forms) >= 25 {
+			writeError(w, http.StatusBadRequest, "Maximum 25 forms per account")
+			return
+		}
+		fm := &fakeForm{
+			ID: f.nextID("form"), Fields: []string{"email", "first_name"}, ButtonText: "Subscribe", ButtonColor: "#10b981",
+			SuccessMessage: "Thanks for subscribing!", DoubleOptIn: true, BlockDisposable: true, Active: true,
+		}
+		apply(fm, true)
+		if fm.CaptchaEnabled && (fm.SiteKey == nil || fm.SecretKey == nil) {
+			writeError(w, http.StatusBadRequest, captchaError)
+			return
+		}
+		fm.CreatedAt = f.now()
+		fm.UpdatedAt = fm.CreatedAt
+		f.forms[fm.ID] = fm
+		writeJSON(w, http.StatusCreated, base(fm))
+		return
+	}
+	if method == http.MethodGet && id == "" {
+		rows := []map[string]any{}
+		for _, fm := range f.forms {
+			rows = append(rows, base(fm))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "has_more": false, "data": rows})
+		return
+	}
+	fm, ok := f.forms[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "Form not found")
+		return
+	}
+	switch method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, full(fm))
+	case http.MethodPatch:
+		next := *fm
+		apply(&next, false)
+		if next.CaptchaEnabled && (next.SiteKey == nil || next.SecretKey == nil) {
+			writeError(w, http.StatusBadRequest, captchaError)
+			return
+		}
+		next.UpdatedAt = f.now()
+		*fm = next
+		writeJSON(w, http.StatusOK, full(fm))
+	case http.MethodDelete:
+		delete(f.forms, id)
+		writeJSON(w, http.StatusOK, map[string]any{"object": "signup_form", "id": id, "deleted": true})
+	}
+}
+
+func (f *fakeAPI) serveSegments(w http.ResponseWriter, method, id string, body map[string]any) {
+	format := func(sg *fakeSegment) map[string]any {
+		return map[string]any{"id": sg.ID, "name": sg.Name, "description": sg.Description, "color": sg.Color, "contact_count": 0, "created_at": sg.CreatedAt, "updated_at": sg.UpdatedAt}
+	}
+	withObject := func(sg *fakeSegment) map[string]any {
+		out := format(sg)
+		out["object"] = "segment"
+		return out
+	}
+	nameTaken := func(name, except string) bool {
+		for _, other := range f.segments {
+			if other.Name == name && other.ID != except {
+				return true
+			}
+		}
+		return false
+	}
+	apply := func(sg *fakeSegment) {
+		if v, ok := body["name"].(string); ok {
+			sg.Name = strings.TrimSpace(v)
+		}
+		fakeNullable(body, "description", &sg.Description, true)
+		fakeNullable(body, "color", &sg.Color, true)
+	}
+
+	switch {
+	case method == http.MethodGet && id == "":
+		rows := []map[string]any{}
+		for _, sg := range f.segments {
+			rows = append(rows, format(sg))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": rows, "total": len(rows), "segment_limit": 10, "tier": "free"})
+		return
+	case method == http.MethodPost && id == "":
+		name, _ := body["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		sg := &fakeSegment{ID: f.nextID("seg")}
+		apply(sg)
+		if nameTaken(sg.Name, "") {
+			writeError(w, http.StatusConflict, "Segment already exists")
+			return
+		}
+		sg.CreatedAt = f.now()
+		sg.UpdatedAt = sg.CreatedAt
+		f.segments[sg.ID] = sg
+		writeJSON(w, http.StatusCreated, withObject(sg))
+		return
+	}
+	sg, ok := f.segments[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "Segment not found")
+		return
+	}
+	switch method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, withObject(sg))
+	case http.MethodPatch:
+		_, hasName := body["name"]
+		_, hasDescription := body["description"]
+		_, hasColor := body["color"]
+		if !hasName && !hasDescription && !hasColor {
+			writeError(w, http.StatusBadRequest, "No valid fields to update")
+			return
+		}
+		next := *sg
+		apply(&next)
+		if nameTaken(next.Name, sg.ID) {
+			writeError(w, http.StatusConflict, "Segment already exists")
+			return
+		}
+		next.UpdatedAt = f.now()
+		*sg = next
+		writeJSON(w, http.StatusOK, withObject(sg))
+	case http.MethodDelete:
+		delete(f.segments, id)
+		writeJSON(w, http.StatusOK, map[string]any{"object": "segment", "id": id, "deleted": true})
+	}
+}
+
+func (f *fakeAPI) serveInboxLabels(w http.ResponseWriter, method, inboxRef, labelID string, body map[string]any) {
+	var inbox *fakeInbox
+	for _, candidate := range f.inboxes {
+		if candidate.ID == inboxRef || candidate.EmailAddress == strings.ToLower(inboxRef) {
+			inbox = candidate
+		}
+	}
+	if inbox == nil {
+		writeError(w, http.StatusNotFound, "Inbox not found")
+		return
+	}
+	format := func(l *fakeLabel) map[string]any {
+		return map[string]any{"object": "inbox_label", "id": l.ID, "name": l.Name, "color": l.Color, "created_at": l.CreatedAt}
+	}
+	var mine []*fakeLabel
+	for _, l := range f.labels {
+		if l.InboxID == inbox.ID {
+			mine = append(mine, l)
+		}
+	}
+	sort.Slice(mine, func(i, j int) bool { return mine[i].CreatedAt < mine[j].CreatedAt })
+	clash := func(name, except string) bool {
+		for _, l := range mine {
+			if strings.EqualFold(l.Name, name) && l.ID != except {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch {
+	case method == http.MethodGet && labelID == "":
+		rows := []map[string]any{}
+		for _, l := range mine {
+			rows = append(rows, format(l))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": rows})
+		return
+	case method == http.MethodPost && labelID == "":
+		name, _ := body["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name must not be empty")
+			return
+		}
+		color := "mauve"
+		if v, ok := body["color"]; ok {
+			c, _ := v.(string)
+			if !slices.Contains(inboxLabelColors, c) {
+				writeError(w, http.StatusBadRequest, "color must be one of "+strings.Join(inboxLabelColors, ", "))
+				return
+			}
+			color = c
+		}
+		if len(mine) >= 100 {
+			writeError(w, http.StatusUnprocessableEntity, "An inbox can have at most 100 labels")
+			return
+		}
+		if clash(name, "") {
+			writeError(w, http.StatusConflict, "A label named "+name+" already exists")
+			return
+		}
+		l := &fakeLabel{ID: f.nextID("lbl"), InboxID: inbox.ID, Name: name, Color: color, CreatedAt: f.now()}
+		f.labels[l.ID] = l
+		writeJSON(w, http.StatusCreated, format(l))
+		return
+	}
+	l, ok := f.labels[labelID]
+	if !ok || l.InboxID != inbox.ID {
+		writeError(w, http.StatusNotFound, "Label not found")
+		return
+	}
+	switch method {
+	case http.MethodPatch:
+		name, hasName := body["name"].(string)
+		name = strings.TrimSpace(name)
+		if hasName && clash(name, l.ID) {
+			writeError(w, http.StatusConflict, "A label named "+name+" already exists")
+			return
+		}
+		if hasName {
+			l.Name = name
+		}
+		if c, ok := body["color"].(string); ok {
+			l.Color = c
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "inbox_label", "id": l.ID})
+	case http.MethodDelete:
+		delete(f.labels, l.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"object": "inbox_label", "id": l.ID, "deleted": true})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (f *fakeAPI) callerManages() bool { return f.callerRole == "owner" || f.callerRole == "admin" }
+
+// acceptInvite is a person accepting their invitation: they join the team
+// with the invited role, and the invitation leaves the pending list.
+func (f *fakeAPI) acceptInvite(email string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, inv := range f.invites {
+		if inv.Email == email && !inv.Accepted {
+			inv.Accepted = true
+			m := &fakeMember{ID: f.nextID("mem"), UserID: f.nextID("usr"), Email: email, Role: inv.Role, CreatedAt: f.now()}
+			f.members[m.ID] = m
+		}
+	}
+}
+
+func (f *fakeAPI) serveInvites(w http.ResponseWriter, method, id string, body map[string]any) {
+	switch {
+	case method == http.MethodGet && id == "":
+		if !f.callerManages() {
+			writeError(w, http.StatusForbidden, "Only team owners and admins can view invitations")
+			return
+		}
+		var pending []*fakeInvite
+		for _, inv := range f.invites {
+			if !inv.Accepted && !inv.Expired {
+				pending = append(pending, inv)
+			}
+		}
+		sort.Slice(pending, func(i, j int) bool { return pending[i].CreatedAt > pending[j].CreatedAt })
+		rows := []map[string]any{}
+		for _, inv := range pending {
+			rows = append(rows, map[string]any{"object": "team_invite", "id": inv.ID, "email": inv.Email, "role": inv.Role, "created_at": inv.CreatedAt, "expires_at": inv.ExpiresAt})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "has_more": false, "data": rows})
+	case method == http.MethodPost && id == "":
+		if !f.callerManages() {
+			writeError(w, http.StatusForbidden, "Only team owners and admins can invite members")
+			return
+		}
+		email, _ := body["email"].(string)
+		email = strings.ToLower(strings.TrimSpace(email))
+		if !strings.Contains(email, "@") {
+			writeError(w, http.StatusBadRequest, "A valid email is required")
+			return
+		}
+		role := "member"
+		if v, ok := body["role"].(string); ok {
+			role = strings.ToLower(strings.TrimSpace(v))
+		}
+		if role != "admin" && role != "member" {
+			writeError(w, http.StatusBadRequest, "Role must be ADMIN or MEMBER")
+			return
+		}
+		if f.freeTeam {
+			writeError(w, http.StatusForbidden, "Inviting teammates requires a paid plan. Upgrade to add your team.")
+			return
+		}
+		for _, m := range f.members {
+			if m.Email == email {
+				writeError(w, http.StatusConflict, "That person is already a member of this team")
+				return
+			}
+		}
+		// Upserted by address: inviting again reuses the invitation.
+		var inv *fakeInvite
+		for _, existing := range f.invites {
+			if existing.Email == email {
+				inv = existing
+			}
+		}
+		if inv == nil {
+			inv = &fakeInvite{ID: f.nextID("inv"), Email: email, CreatedAt: f.now()}
+			f.invites[inv.ID] = inv
+		}
+		inv.Role, inv.Accepted, inv.Expired = role, false, false
+		inv.ExpiresAt = f.clock.Add(7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+		writeJSON(w, http.StatusCreated, map[string]any{"object": "team_invite", "id": inv.ID, "email": inv.Email, "role": inv.Role, "expires_at": inv.ExpiresAt})
+	case method == http.MethodDelete && id != "":
+		if !f.callerManages() {
+			writeError(w, http.StatusForbidden, "Only team owners and admins can revoke invitations")
+			return
+		}
+		if _, ok := f.invites[id]; !ok {
+			writeError(w, http.StatusNotFound, "Invite not found")
+			return
+		}
+		delete(f.invites, id)
+		writeJSON(w, http.StatusOK, map[string]any{"object": "team_invite", "id": id, "deleted": true})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (f *fakeAPI) serveMembers(w http.ResponseWriter, method, id string, body map[string]any) {
+	billing := func(m *fakeMember) bool { return m.Role == "owner" || m.Billing }
+	owners := func() int {
+		n := 0
+		for _, m := range f.members {
+			if m.Role == "owner" {
+				n++
+			}
+		}
+		return n
+	}
+	if method == http.MethodGet && id == "" {
+		var all []*fakeMember
+		for _, m := range f.members {
+			all = append(all, m)
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt < all[j].CreatedAt })
+		rows := []map[string]any{}
+		for _, m := range all {
+			rows = append(rows, map[string]any{"object": "team_member", "id": m.ID, "user_id": m.UserID, "email": m.Email, "name": m.Name, "role": m.Role, "can_manage_billing": billing(m), "created_at": m.CreatedAt})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "has_more": false, "data": rows})
+		return
+	}
+	switch method {
+	case http.MethodPatch:
+		rawRole, wantsRole := body["role"]
+		rawBilling, wantsBilling := body["can_manage_billing"]
+		newBilling, billingIsBool := rawBilling.(bool)
+		switch {
+		case !wantsRole && !wantsBilling:
+			writeError(w, http.StatusBadRequest, "Send role and/or can_manage_billing")
+			return
+		case wantsBilling && !billingIsBool:
+			writeError(w, http.StatusBadRequest, "can_manage_billing must be a boolean")
+			return
+		case wantsBilling && f.callerRole != "owner":
+			writeError(w, http.StatusForbidden, "Only an owner can change billing access")
+			return
+		case wantsRole && !f.callerManages():
+			writeError(w, http.StatusForbidden, "Only team owners and admins can change roles")
+			return
+		}
+		role, _ := rawRole.(string)
+		role = strings.ToLower(strings.TrimSpace(role))
+		if wantsRole && !slices.Contains(teamRoles, role) {
+			writeError(w, http.StatusBadRequest, "role must be owner, admin or member")
+			return
+		}
+		m, ok := f.members[id]
+		if !ok {
+			writeError(w, http.StatusNotFound, "Member not found")
+			return
+		}
+		if wantsRole {
+			if f.callerRole == "admin" && (m.Role == "owner" || role == "owner") {
+				writeError(w, http.StatusForbidden, "You don't have permission to change this member's role")
+				return
+			}
+			if m.Role == "owner" && role != "owner" && owners() <= 1 {
+				writeError(w, http.StatusBadRequest, "A team must have at least one owner")
+				return
+			}
+			m.Role = role
+		}
+		if wantsBilling {
+			m.Billing = newBilling
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "team_member", "id": m.ID, "role": m.Role, "can_manage_billing": billing(m)})
+	case http.MethodDelete:
+		if !f.callerManages() {
+			writeError(w, http.StatusForbidden, "Only team owners and admins can remove members")
+			return
+		}
+		m, ok := f.members[id]
+		if !ok {
+			writeError(w, http.StatusNotFound, "Member not found")
+			return
+		}
+		if m.ID == f.callerMemberID {
+			writeError(w, http.StatusBadRequest, "Use “Leave team” to remove yourself")
+			return
+		}
+		if f.callerRole == "admin" && m.Role == "owner" {
+			writeError(w, http.StatusForbidden, "You don't have permission to remove this member")
+			return
+		}
+		if m.Role == "owner" && owners() <= 1 {
+			writeError(w, http.StatusBadRequest, "A team must have at least one owner")
+			return
+		}
+		delete(f.members, id)
+		writeJSON(w, http.StatusOK, map[string]any{"object": "team_member", "id": id, "deleted": true})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
 }

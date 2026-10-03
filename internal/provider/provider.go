@@ -41,8 +41,11 @@ func (p *smtpfastProvider) Metadata(_ context.Context, _ provider.MetadataReques
 
 func (p *smtpfastProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "The SMTPfast provider manages resources on [SMTPfast](https://smtpfa.st), a transactional email API: sending domains, API keys, webhooks, templates, inboxes and contact properties.\n\n" +
-			"Each resource needs the provider's API key to hold the scopes its page lists. A key created without scopes gets the default set, which does not include `apikey:manage` or `inbound:read`: managing `smtpfast_api_key` and `smtpfast_inbox` needs a key created with them.",
+		MarkdownDescription: "The SMTPfast provider manages resources on [SMTPfast](https://smtpfa.st), a transactional email API: sending domains, API keys, webhooks, templates, " +
+			"inboxes and their labels, contact properties, segments, signup forms, and the team's members and invitations.\n\n" +
+			"Each resource needs the provider's API key to hold the scopes its page lists. A key created without scopes gets the default set, which does not include " +
+			"`apikey:manage`, `inbound:read`, `team:read` or `team:manage`: managing `smtpfast_api_key`, `smtpfast_inbox`, `smtpfast_inbox_label`, `smtpfast_team_invite` " +
+			"and `smtpfast_team_member` needs a key created with them.",
 		Attributes: map[string]schema.Attribute{
 			"api_key": schema.StringAttribute{
 				MarkdownDescription: "SMTPfast API key. Can also be set with the `SMTPFAST_API_KEY` environment variable. Create one in the [SMTPfast dashboard](https://smtpfa.st).",
@@ -107,11 +110,17 @@ func (p *smtpfastProvider) Resources(_ context.Context) []func() resource.Resour
 		NewTemplateResource,
 		NewInboxResource,
 		NewContactPropertyResource,
+		NewInboxLabelResource,
+		NewSegmentResource,
+		NewSignupFormResource,
+		NewTeamInviteResource,
+		NewTeamMemberResource,
 	}
 }
 
 func (p *smtpfastProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewDomainDataSource,
+		NewSegmentDataSource,
 	}
 }

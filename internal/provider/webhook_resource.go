@@ -264,27 +264,3 @@ func mapWebhookToState(wh *client.Webhook, m *webhookResourceModel) diag.Diagnos
 	}
 	return reconcileStringList(wh.Events, &m.Events)
 }
-
-// keepStateOrDefaultBool plans an omitted attribute as its current state
-// value, or as def on create. A static default would instead plan def on
-// every apply and undo a change made outside Terraform.
-type keepStateOrDefaultBool struct{ def bool }
-
-func (m keepStateOrDefaultBool) Description(context.Context) string {
-	return fmt.Sprintf("Keeps the current value when omitted; %t on create.", m.def)
-}
-
-func (m keepStateOrDefaultBool) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m keepStateOrDefaultBool) PlanModifyBool(_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
-	if !req.ConfigValue.IsNull() {
-		return
-	}
-	if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
-		resp.PlanValue = types.BoolValue(m.def)
-		return
-	}
-	resp.PlanValue = req.StateValue
-}
