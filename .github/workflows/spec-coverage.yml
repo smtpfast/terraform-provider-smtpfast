@@ -1,0 +1,84 @@
+name: Spec coverage
+
+# Compares the live SMTPfast OpenAPI spec with spec-coverage.json and keeps one
+# tracking issue (label: spec-coverage) in step with the result. See the Spec
+# coverage section of the README.
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: spec-coverage
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check spec coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          # The check uses only the standard library.
+          cache: false
+
+      # Any fetch or parse error fails the job here, before the issue step,
+      # so a broken run never closes the issue.
+      - name: Fetch the spec
+        run: >-
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 60
+          -o "$RUNNER_TEMP/openapi.json" https://smtpfa.st/api/v1/openapi.json
+
+      - name: Compare with spec-coverage.json
+        run: |
+          go run ./tools/speccoverage -spec "$RUNNER_TEMP/openapi.json"
+          go run ./tools/speccoverage -spec "$RUNNER_TEMP/openapi.json" -format markdown > "$RUNNER_TEMP/body.md"
+
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BODY_FILE: ${{ runner.temp }}/body.md
+        run: |
+          set -euo pipefail
+          label=spec-coverage
+
+          if ! gh api "repos/$GH_REPO/labels/$label" --silent 2>/dev/null; then
+            gh label create "$label" --color 1d76db --description "API operations the provider does not cover yet"
+          fi
+
+          open=$(gh issue list --label "$label" --state open --limit 1 --json number --jq '.[0].number // empty')
+
+          if [ ! -s "$BODY_FILE" ]; then
+            if [ -n "$open" ]; then
+              gh issue close "$open" --comment "Every operation in the API spec is now covered or ignored in spec-coverage.json."
+            fi
+            echo "Nothing to report."
+            exit 0
+          fi
+
+          if [ -n "$open" ]; then
+            if [ "$(gh issue view "$open" --json body --jq .body)" != "$(cat "$BODY_FILE")" ]; then
+              gh issue edit "$open" --body-file "$BODY_FILE"
+              echo "Updated issue #$open."
+            else
+              echo "Issue #$open is up to date."
+            fi
+            exit 0
+          fi
+
+          # Reuse the last closed issue so the history stays in one place.
+          closed=$(gh issue list --label "$label" --state closed --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$closed" ]; then
+            gh issue edit "$closed" --body-file "$BODY_FILE"
+            gh issue reopen "$closed" --comment "The spec coverage check has something to report again."
+          else
+            gh issue create --title "API operations the provider does not cover" --label "$label" --body-file "$BODY_FILE"
+          fi

@@ -34,4 +34,9 @@ lint:
 docs:
 	go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name smtpfast
 
-.PHONY: default build install test testacc fmt vet lint docs
+# List API operations that spec-coverage.json does not classify. Fetches the
+# live OpenAPI spec, so it needs network access.
+spec-coverage:
+	go run ./tools/speccoverage
+
+.PHONY: default build install test testacc fmt vet lint docs spec-coverage

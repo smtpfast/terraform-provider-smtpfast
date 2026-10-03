@@ -113,6 +113,7 @@ make test      # unit tests (no network, no credentials)
 make fmt vet   # format and vet
 make lint      # golangci-lint
 make docs      # regenerate docs/ from schema + examples
+make spec-coverage  # list API operations not classified in spec-coverage.json
 ```
 
 When the Terraform CLI is on your `PATH`, `make test` also runs real plan, apply and import cycles against an in-memory fake of the API (`internal/provider/fake_api_test.go`). They catch perpetual diffs and inconsistent results without credentials; without Terraform they are skipped.
@@ -143,13 +144,32 @@ make testacc
 
 Use a test account, not production: adding a domain provisions a real sending identity, and a created API key is a real secret. The tests use randomized names and clean up after themselves. The key needs `apikey:manage` for the API key test. The inbox test needs a domain that can already receive mail, so it only runs when you set `SMTPFAST_ACC_INBOX_ADDRESS` to an address on one (and the key has `inbound:read`).
 
+### Spec coverage
+
+A daily workflow (`.github/workflows/spec-coverage.yml`) checks the live [OpenAPI spec](https://smtpfa.st/api/v1/openapi.json) against `spec-coverage.json`. It keeps one issue, labelled `spec-coverage`, that lists every operation the file does not classify, and closes it when nothing is left. Run the same check locally with `make spec-coverage`.
+
+Each operation in the spec is either:
+
+- **covered**: listed under the resource that calls it, as one exact `"METHOD /path"`. Keep this in step with `internal/client/`.
+- **ignored**: matched by a rule in a group with a short reason. This is for runtime work and data that do not belong in Terraform, such as sending mail, logs, contacts and broadcasts.
+
+A rule is `"METHOD /path"`, or `"/path"` for every method. In a path, `{id}` matches any path parameter (whatever the spec calls it) but not a fixed segment, `*` matches one segment, and a trailing `**` matches the path and everything below it.
+
+When the issue lists an operation:
+
+- If the provider should manage it, add or extend the resource and list the operation under it in `covered`, in the same PR.
+- If it is runtime work or data, add a rule to the `ignored` group that fits, or a new group with its reason. Ignore a whole family with `/v1/things/**` only when nothing in it could be infrastructure, so later endpoints there need no edits. Where a family mixes both, use exact rules, so a new sub-resource still shows up.
+- If it could be a resource but nobody has built it yet, leave it unclassified. The issue is the to-do list.
+
+Do not close the issue by hand; the next run reopens it while anything is left. The issue also lists rules that match no operation, because a covered rule there can mean the provider calls an endpoint the API no longer has.
+
 ## Releasing
 
 Releases are cut by GoReleaser on a `v*` tag via GitHub Actions. Publishing to the Terraform Registry needs a GPG signing key exposed to the workflow as the `GPG_PRIVATE_KEY` and `PASSPHRASE` secrets, and the public key registered with the registry. See the [registry publishing docs](https://developer.hashicorp.com/terraform/registry/providers/publishing).
 
 ## Contributing
 
-Issues and pull requests welcome. Keep the API client, resources, and tests in step, and run `make fmt vet test docs` before opening a PR.
+Issues and pull requests welcome. Keep the API client, resources, tests, and `spec-coverage.json` in step, and run `make fmt vet test docs` before opening a PR.
 
 ## License
 

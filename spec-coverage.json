@@ -1,0 +1,112 @@
+{
+  "$comment": "Classifies every SMTPfast API operation for the daily spec coverage check. See the Spec coverage section of README.md.",
+  "covered": {
+    "smtpfast_api_key": [
+      "POST /v1/api-keys",
+      "GET /v1/api-keys",
+      "PATCH /v1/api-keys/{id}",
+      "DELETE /v1/api-keys/{id}"
+    ],
+    "smtpfast_contact_property": [
+      "POST /v1/contact-properties",
+      "GET /v1/contact-properties/{id}",
+      "PATCH /v1/contact-properties/{id}",
+      "DELETE /v1/contact-properties/{id}"
+    ],
+    "smtpfast_domain": [
+      "POST /v1/domains",
+      "GET /v1/domains",
+      "GET /v1/domains/{id}",
+      "PATCH /v1/domains/{id}",
+      "DELETE /v1/domains/{id}"
+    ],
+    "smtpfast_inbox": [
+      "POST /v1/inboxes",
+      "GET /v1/inboxes/{id}",
+      "PATCH /v1/inboxes/{id}",
+      "DELETE /v1/inboxes/{id}"
+    ],
+    "smtpfast_template": [
+      "POST /v1/templates",
+      "GET /v1/templates/{id}",
+      "PATCH /v1/templates/{id}",
+      "DELETE /v1/templates/{id}",
+      "POST /v1/templates/{id}/publish"
+    ],
+    "smtpfast_webhook": [
+      "POST /v1/webhooks",
+      "GET /v1/webhooks/{id}",
+      "PATCH /v1/webhooks/{id}",
+      "DELETE /v1/webhooks/{id}"
+    ]
+  },
+  "ignored": [
+    {
+      "reason": "Sending, scheduling and reading email, received mail included, is runtime work.",
+      "rules": ["/v1/emails/**"]
+    },
+    {
+      "reason": "Inbox threads, drafts, replies and forwards are mail, not configuration.",
+      "rules": ["/v1/inboxes/{id}/threads/**", "/v1/inboxes/{id}/drafts/**"]
+    },
+    {
+      "reason": "Broadcasts are marketing sends that are written, scheduled and sent at runtime.",
+      "rules": ["/v1/broadcasts/**"]
+    },
+    {
+      "reason": "Contacts and segment membership are data the application changes at runtime.",
+      "rules": ["/v1/contacts/**", "GET /v1/segments/{id}/contacts"]
+    },
+    {
+      "reason": "Suppressions are list data that grows with bounces, complaints and unsubscribes.",
+      "rules": ["/v1/suppressions/**"]
+    },
+    {
+      "reason": "Signups waiting for approval are runtime data.",
+      "rules": ["/v1/forms/{id}/pending/**"]
+    },
+    {
+      "reason": "Logs, analytics and usage are reporting data.",
+      "rules": ["/v1/logs/**", "/v1/analytics/**", "/v1/usage/**"]
+    },
+    {
+      "reason": "Webhook deliveries and events are delivery records.",
+      "rules": ["/v1/webhooks/{id}/deliveries/**", "/v1/webhooks/{id}/events/**"]
+    },
+    {
+      "reason": "One-off actions with no state for Terraform to hold.",
+      "rules": [
+        "POST /v1/domains/{id}/verify",
+        "POST /v1/templates/{id}/duplicate",
+        "POST /v1/webhooks/{id}/test",
+        "POST /v1/webhooks/{id}/signing-secret/rotate",
+        "POST /v1/forms/{id}/welcome-preview"
+      ]
+    },
+    {
+      "reason": "Claiming moves a never-verified domain from another account once. It is a transfer, not desired state.",
+      "rules": ["/v1/domains/claim"]
+    },
+    {
+      "reason": "Domain Connect returns a link a person opens in Cloudflare. With Terraform, publish dns_records through a DNS provider instead.",
+      "rules": ["/v1/domains/{id}/domain-connect/**"]
+    },
+    {
+      "reason": "List endpoints. These resources read their object by ID.",
+      "rules": [
+        "GET /v1/contact-properties",
+        "GET /v1/inboxes",
+        "GET /v1/templates",
+        "GET /v1/webhooks"
+      ]
+    },
+    {
+      "reason": "Same update as PATCH /v1/webhooks/{id}, which smtpfast_webhook uses.",
+      "rules": ["PUT /v1/webhooks/{id}"]
+    },
+    {
+      "reason": "Describes the calling API key (scopes, plan, limits). Nothing to manage.",
+      "rules": ["GET /v1/me"]
+    }
+  ]
+}
