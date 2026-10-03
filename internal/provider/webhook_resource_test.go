@@ -20,6 +20,8 @@ func TestAccWebhookResource(t *testing.T) {
 					resource.TestCheckResourceAttr("smtpfast_webhook.test", "url", "https://example.com/tf-acc"),
 					resource.TestCheckResourceAttr("smtpfast_webhook.test", "events.#", "1"),
 					resource.TestCheckResourceAttrSet("smtpfast_webhook.test", "id"),
+					resource.TestCheckResourceAttr("smtpfast_webhook.test", "format", "standard"),
+					resource.TestCheckResourceAttrSet("smtpfast_webhook.test", "signing_secret"),
 				),
 			},
 			{
@@ -37,6 +39,8 @@ func TestAccWebhookResource(t *testing.T) {
 				ResourceName:      "smtpfast_webhook.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+				// The signing secret is only returned on create.
+				ImportStateVerifyIgnore: []string{"signing_secret"},
 			},
 		},
 	})

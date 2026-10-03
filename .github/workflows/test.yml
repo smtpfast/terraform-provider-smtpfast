@@ -18,6 +18,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The plan/apply tests against the fake API need a Terraform CLI; they
+      # skip without one rather than download it.
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
       - run: go mod download
       - run: go build ./...
       - run: go vet ./...

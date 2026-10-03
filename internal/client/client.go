@@ -1,12 +1,13 @@
 // Package client is a small HTTP client for the SMTPfast (smtpfa.st) API.
 // It wraps the v1 endpoints the Terraform provider needs: sending domains,
-// API keys, and webhooks.
+// API keys, webhooks, templates, inboxes and contact properties.
 package client
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,6 +44,9 @@ func New(apiKey, baseURL, userAgent string) *Client {
 type APIError struct {
 	StatusCode int
 	Message    string
+	// Code is the machine-readable error code when the API sends one, such as
+	// "revision_conflict" from the templates API or "domain_claimable".
+	Code string
 }
 
 func (e *APIError) Error() string {
@@ -56,10 +60,16 @@ func (e *APIError) NotFound() bool { return e.StatusCode == http.StatusNotFound 
 // IsNotFound is a convenience for callers that have an error value.
 func IsNotFound(err error) bool {
 	var apiErr *APIError
-	if e, ok := err.(*APIError); ok {
-		apiErr = e
+	return errors.As(err, &apiErr) && apiErr.NotFound()
+}
+
+// ErrorCode returns the API error code of err, or "" when it has none.
+func ErrorCode(err error) string {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code
 	}
-	return apiErr != nil && apiErr.NotFound()
+	return ""
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
@@ -96,12 +106,25 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if res.StatusCode >= http.StatusBadRequest {
 		msg := strings.TrimSpace(string(data))
 		var body struct {
-			Error string `json:"error"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+			Code    string `json:"code"`
+			// Name carries the code on the Resend-compatible endpoints.
+			Name string `json:"name"`
 		}
-		if json.Unmarshal(data, &body) == nil && body.Error != "" {
-			msg = body.Error
+		apiErr := &APIError{StatusCode: res.StatusCode, Message: msg}
+		if json.Unmarshal(data, &body) == nil {
+			if body.Error != "" {
+				apiErr.Message = body.Error
+			} else if body.Message != "" {
+				apiErr.Message = body.Message
+			}
+			apiErr.Code = body.Code
+			if apiErr.Code == "" {
+				apiErr.Code = body.Name
+			}
 		}
-		return &APIError{StatusCode: res.StatusCode, Message: msg}
+		return apiErr
 	}
 
 	if out != nil && len(data) > 0 {

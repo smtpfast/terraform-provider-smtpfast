@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // DNSRecord is a DNS entry the user must publish to verify a sending domain.
@@ -27,6 +28,9 @@ type Domain struct {
 type DomainReceiving struct {
 	Enabled bool   `json:"enabled"`
 	Status  string `json:"status"`
+	// MXRecord is the record receiving needs. GET returns it whether or not
+	// receiving is on, which lets a plan predict dns_records.
+	MXRecord *DNSRecord `json:"mx_record,omitempty"`
 }
 
 // SetDomainReceiving turns inbound email on or off for a domain. Enabling
@@ -35,7 +39,7 @@ func (c *Client) SetDomainReceiving(ctx context.Context, id string, enabled bool
 	var out struct {
 		Receiving DomainReceiving `json:"receiving"`
 	}
-	err := c.do(ctx, http.MethodPatch, "/v1/domains/"+id, map[string]bool{"receiving_enabled": enabled}, &out)
+	err := c.do(ctx, http.MethodPatch, "/v1/domains/"+url.PathEscape(id), map[string]bool{"receiving_enabled": enabled}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -55,14 +59,30 @@ func (c *Client) CreateDomain(ctx context.Context, domain string) (*Domain, erro
 // GetDomain fetches a sending domain by ID.
 func (c *Client) GetDomain(ctx context.Context, id string) (*Domain, error) {
 	var out Domain
-	err := c.do(ctx, http.MethodGet, "/v1/domains/"+id, nil, &out)
+	err := c.do(ctx, http.MethodGet, "/v1/domains/"+url.PathEscape(id), nil, &out)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
+// DomainSummary is one row of the domain list.
+type DomainSummary struct {
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+	Status string `json:"status"`
+}
+
+// ListDomains returns the team's sending domains, newest first.
+func (c *Client) ListDomains(ctx context.Context) ([]DomainSummary, error) {
+	var out []DomainSummary
+	if err := c.do(ctx, http.MethodGet, "/v1/domains", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteDomain removes a sending domain.
 func (c *Client) DeleteDomain(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/domains/"+id, nil, nil)
+	return c.do(ctx, http.MethodDelete, "/v1/domains/"+url.PathEscape(id), nil, nil)
 }

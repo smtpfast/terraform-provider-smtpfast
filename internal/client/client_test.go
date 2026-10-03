@@ -136,3 +136,176 @@ func TestCreateWebhook(t *testing.T) {
 		t.Fatalf("unexpected webhook: %+v", got)
 	}
 }
+
+func TestAPIErrorCode(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"statusCode":409,"name":"revision_conflict","message":"changed","error":"changed"}`))
+	})
+
+	_, err := c.PublishTemplate(context.Background(), "tpl_1", "2026-10-01T00:00:00.000Z")
+	if got := ErrorCode(err); got != RevisionConflictCode {
+		t.Fatalf("ErrorCode = %q, want %q (err = %v)", got, RevisionConflictCode, err)
+	}
+	if IsNotFound(err) {
+		t.Fatal("IsNotFound = true for a 409")
+	}
+}
+
+func TestListDomains(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/domains" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":"dom_1","domain":"mail.example.com","status":"verified","receivingEnabled":false}]`))
+	})
+
+	got, err := c.ListDomains(context.Background())
+	if err != nil {
+		t.Fatalf("ListDomains: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "dom_1" || got[0].Domain != "mail.example.com" {
+		t.Fatalf("unexpected domains: %+v", got)
+	}
+}
+
+func TestCreateAPIKey(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/api-keys" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body CreateAPIKeyRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Name != "ci" || len(body.Scopes) != 1 || body.Scopes[0] != "email:send" {
+			t.Errorf("unexpected body: %+v", body)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"key_1","name":"ci","key":"sf_live_secret","prefix":"sf_live_a","scopes":["email:send"],"created_at":"2026-10-01T10:00:00.000Z"}`))
+	})
+
+	got, err := c.CreateAPIKey(context.Background(), CreateAPIKeyRequest{Name: "ci", Scopes: []string{"email:send"}})
+	if err != nil {
+		t.Fatalf("CreateAPIKey: %v", err)
+	}
+	if got.Key != "sf_live_secret" || got.Prefix != "sf_live_a" || got.CreatedAt != "2026-10-01T10:00:00.000Z" {
+		t.Fatalf("unexpected key: %+v", got)
+	}
+}
+
+// The list endpoint answers with database field names (keyPrefix, createdAt,
+// revokedAt), not the snake_case the create call uses.
+func TestGetAPIKeySearchesTheList(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/api-keys" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[
+			{"id":"key_2","name":"old","keyPrefix":"sf_live_b","scopes":["email:send"],"createdAt":"2026-09-01T10:00:00.000Z","revokedAt":"2026-09-02T10:00:00.000Z","lastUsedAt":null},
+			{"id":"key_1","name":"ci","keyPrefix":"sf_live_a","scopes":["email:send","domain:read"],"createdAt":"2026-10-01T10:00:00.000Z","revokedAt":null,"lastUsedAt":null}
+		]`))
+	})
+
+	got, err := c.GetAPIKey(context.Background(), "key_1")
+	if err != nil {
+		t.Fatalf("GetAPIKey: %v", err)
+	}
+	if got.Name != "ci" || got.Prefix != "sf_live_a" || got.CreatedAt != "2026-10-01T10:00:00.000Z" || got.RevokedAt != "" || len(got.Scopes) != 2 {
+		t.Fatalf("unexpected key: %+v", got)
+	}
+
+	revoked, err := c.GetAPIKey(context.Background(), "key_2")
+	if err != nil {
+		t.Fatalf("GetAPIKey(revoked): %v", err)
+	}
+	if revoked.RevokedAt == "" {
+		t.Fatalf("RevokedAt not decoded: %+v", revoked)
+	}
+
+	if _, err := c.GetAPIKey(context.Background(), "key_missing"); !IsNotFound(err) {
+		t.Fatalf("missing key: IsNotFound = false, err = %v", err)
+	}
+}
+
+func TestUpdateAPIKeySendsOnlyChangedFields(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/v1/api-keys/key_1" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, ok := body["name"]; ok {
+			t.Errorf("name sent although unchanged: %v", body)
+		}
+		if scopes, ok := body["scopes"].([]any); !ok || len(scopes) != 2 {
+			t.Errorf("scopes = %v", body["scopes"])
+		}
+		_, _ = w.Write([]byte(`{"id":"key_1","name":"ci","keyPrefix":"sf_live_a","scopes":["email:send","logs:read"],"createdAt":"2026-10-01T10:00:00.000Z","revokedAt":null}`))
+	})
+
+	got, err := c.UpdateAPIKey(context.Background(), "key_1", UpdateAPIKeyRequest{Scopes: []string{"email:send", "logs:read"}})
+	if err != nil {
+		t.Fatalf("UpdateAPIKey: %v", err)
+	}
+	if got.Prefix != "sf_live_a" || len(got.Scopes) != 2 || got.Scopes[1] != "logs:read" {
+		t.Fatalf("unexpected key: %+v", got)
+	}
+}
+
+func TestCreateWebhookReturnsSigningSecret(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["format"] != "slack" {
+			t.Errorf("format = %v", body["format"])
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"wh_1","url":"https://hooks.slack.com/x","events":["email.bounced"],"format":"slack","secret":"whsec","active":true,"created_at":"2026-10-01T10:00:00.000Z"}`))
+	})
+
+	got, err := c.CreateWebhook(context.Background(), CreateWebhookRequest{URL: "https://hooks.slack.com/x", Events: []string{"email.bounced"}, Format: "slack"})
+	if err != nil {
+		t.Fatalf("CreateWebhook: %v", err)
+	}
+	if got.SigningSecret != "whsec" || got.Format != "slack" || got.CreatedAt == "" {
+		t.Fatalf("unexpected webhook: %+v", got)
+	}
+}
+
+// GET answers with createdAt; PATCH answers without any timestamp.
+func TestWebhookReadAndUpdateShapes(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"id":"wh_1","url":"https://example.com/h","events":["email.sent"],"format":"standard","active":false,"createdAt":"2026-10-01T10:00:00.000Z","updatedAt":"2026-10-02T10:00:00.000Z"}`))
+		case http.MethodPatch:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["active"] != false {
+				t.Errorf("active = %v, want false", body["active"])
+			}
+			if _, ok := body["url"]; ok {
+				t.Errorf("url sent although nil: %v", body)
+			}
+			_, _ = w.Write([]byte(`{"id":"wh_1","url":"https://example.com/h","events":["email.sent"],"format":"standard","active":false}`))
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	})
+
+	got, err := c.GetWebhook(context.Background(), "wh_1")
+	if err != nil {
+		t.Fatalf("GetWebhook: %v", err)
+	}
+	if got.CreatedAt != "2026-10-01T10:00:00.000Z" || got.Active {
+		t.Fatalf("unexpected webhook: %+v", got)
+	}
+
+	active := false
+	updated, err := c.UpdateWebhook(context.Background(), "wh_1", UpdateWebhookRequest{Active: &active})
+	if err != nil {
+		t.Fatalf("UpdateWebhook: %v", err)
+	}
+	if updated.Active || updated.CreatedAt != "" {
+		t.Fatalf("unexpected webhook: %+v", updated)
+	}
+}
