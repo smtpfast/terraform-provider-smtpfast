@@ -36,20 +36,14 @@ func (c *Client) ListInboxLabels(ctx context.Context, inboxID string) ([]InboxLa
 	return out.Data, nil
 }
 
-// GetInboxLabel finds a label by ID. The API has no single-label read, so
-// this searches the inbox's labels and answers a 404 APIError when the label
-// is not there. A missing inbox is a 404 too.
+// GetInboxLabel reads one label of an inbox. A label of another inbox, or a
+// missing inbox, is a 404 APIError.
 func (c *Client) GetInboxLabel(ctx context.Context, inboxID, labelID string) (*InboxLabel, error) {
-	labels, err := c.ListInboxLabels(ctx, inboxID)
-	if err != nil {
+	var out InboxLabel
+	if err := c.do(ctx, http.MethodGet, inboxLabelsPath(inboxID)+"/"+url.PathEscape(labelID), nil, &out); err != nil {
 		return nil, err
 	}
-	for i := range labels {
-		if labels[i].ID == labelID {
-			return &labels[i], nil
-		}
-	}
-	return nil, &APIError{StatusCode: http.StatusNotFound, Message: "Label not found"}
+	return &out, nil
 }
 
 // CreateInboxLabel adds a label to an inbox. Names are unique in the inbox,

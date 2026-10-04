@@ -30,7 +30,8 @@
       "GET /v1/inboxes/{inbox_id}/labels",
       "POST /v1/inboxes/{inbox_id}/labels",
       "PATCH /v1/inboxes/{inbox_id}/labels/{label_id}",
-      "DELETE /v1/inboxes/{inbox_id}/labels/{label_id}"
+      "DELETE /v1/inboxes/{inbox_id}/labels/{label_id}",
+      "GET /v1/inboxes/{inbox_id}/labels/{label_id}"
     ],
     "smtpfast_segment": [
       "POST /v1/segments",
@@ -49,7 +50,8 @@
       "POST /v1/team/invites",
       "GET /v1/team/invites",
       "DELETE /v1/team/invites/{id}",
-      "GET /v1/team/members"
+      "GET /v1/team/members",
+      "GET /v1/team/invites/{id}"
     ],
     "smtpfast_team_member": [
       "GET /v1/team/members",
@@ -73,35 +75,56 @@
   "ignored": [
     {
       "reason": "Sending, scheduling and reading email, received mail included, is runtime work.",
-      "rules": ["/v1/emails/**"]
+      "rules": [
+        "/v1/emails/**"
+      ]
     },
     {
       "reason": "Inbox threads, drafts, replies and forwards are mail, not configuration.",
-      "rules": ["/v1/inboxes/{id}/threads/**", "/v1/inboxes/{id}/drafts/**"]
+      "rules": [
+        "/v1/inboxes/{id}/threads/**",
+        "/v1/inboxes/{id}/drafts/**"
+      ]
     },
     {
       "reason": "Broadcasts are marketing sends that are written, scheduled and sent at runtime.",
-      "rules": ["/v1/broadcasts/**"]
+      "rules": [
+        "/v1/broadcasts/**"
+      ]
     },
     {
       "reason": "Contacts and segment membership are data the application changes at runtime.",
-      "rules": ["/v1/contacts/**", "GET /v1/segments/{id}/contacts"]
+      "rules": [
+        "/v1/contacts/**",
+        "GET /v1/segments/{id}/contacts"
+      ]
     },
     {
       "reason": "Suppressions are list data that grows with bounces, complaints and unsubscribes.",
-      "rules": ["/v1/suppressions/**"]
+      "rules": [
+        "/v1/suppressions/**"
+      ]
     },
     {
       "reason": "Signups waiting for approval are runtime data.",
-      "rules": ["/v1/forms/{id}/pending/**"]
+      "rules": [
+        "/v1/forms/{id}/pending/**"
+      ]
     },
     {
       "reason": "Logs, analytics and usage are reporting data.",
-      "rules": ["/v1/logs/**", "/v1/analytics/**", "/v1/usage/**"]
+      "rules": [
+        "/v1/logs/**",
+        "/v1/analytics/**",
+        "/v1/usage/**"
+      ]
     },
     {
       "reason": "Webhook deliveries and events are delivery records.",
-      "rules": ["/v1/webhooks/{id}/deliveries/**", "/v1/webhooks/{id}/events/**"]
+      "rules": [
+        "/v1/webhooks/{id}/deliveries/**",
+        "/v1/webhooks/{id}/events/**"
+      ]
     },
     {
       "reason": "One-off actions with no state for Terraform to hold.",
@@ -115,11 +138,15 @@
     },
     {
       "reason": "Claiming moves a never-verified domain from another account once. It is a transfer, not desired state.",
-      "rules": ["/v1/domains/claim"]
+      "rules": [
+        "/v1/domains/claim"
+      ]
     },
     {
       "reason": "Domain Connect returns a link a person opens in Cloudflare. With Terraform, publish dns_records through a DNS provider instead.",
-      "rules": ["/v1/domains/{id}/domain-connect/**"]
+      "rules": [
+        "/v1/domains/{id}/domain-connect/**"
+      ]
     },
     {
       "reason": "List endpoints. These resources read their object by ID.",
@@ -133,11 +160,15 @@
     },
     {
       "reason": "Same update as PATCH /v1/webhooks/{id}, which smtpfast_webhook uses.",
-      "rules": ["PUT /v1/webhooks/{id}"]
+      "rules": [
+        "PUT /v1/webhooks/{id}"
+      ]
     },
     {
       "reason": "Describes the calling API key (scopes, plan, limits). Nothing to manage.",
-      "rules": ["GET /v1/me"]
+      "rules": [
+        "GET /v1/me"
+      ]
     }
   ]
 }

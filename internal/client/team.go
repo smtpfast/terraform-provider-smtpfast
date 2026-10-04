@@ -49,6 +49,16 @@ func (c *Client) ListTeamInvites(ctx context.Context) ([]TeamInvite, error) {
 	return out.Data, nil
 }
 
+// GetTeamInvite reads one pending invitation. An accepted or expired
+// invitation, or another team's, is a 404 APIError. Owner or admin only.
+func (c *Client) GetTeamInvite(ctx context.Context, id string) (*TeamInvite, error) {
+	var out TeamInvite
+	if err := c.do(ctx, http.MethodGet, "/v1/team/invites/"+url.PathEscape(id), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // CreateTeamInvite emails an invitation to join the team. Inviting an
 // address that already has a pending invitation refreshes that invitation
 // (same ID, new link, new role).
