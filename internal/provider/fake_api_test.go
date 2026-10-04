@@ -908,6 +908,8 @@ func (f *fakeAPI) serveInboxLabels(w http.ResponseWriter, method, inboxRef, labe
 		return
 	}
 	switch method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, format(l))
 	case http.MethodPatch:
 		name, hasName := body["name"].(string)
 		name = strings.TrimSpace(name)
@@ -1010,6 +1012,17 @@ func (f *fakeAPI) serveInvites(w http.ResponseWriter, method, id string, body ma
 		inv.Role, inv.Accepted, inv.Expired = role, false, false
 		inv.ExpiresAt = f.clock.Add(7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
 		writeJSON(w, http.StatusCreated, map[string]any{"object": "team_invite", "id": inv.ID, "email": inv.Email, "role": inv.Role, "expires_at": inv.ExpiresAt})
+	case method == http.MethodGet && id != "":
+		if !f.callerManages() {
+			writeError(w, http.StatusForbidden, "Only team owners and admins can view invitations")
+			return
+		}
+		inv, ok := f.invites[id]
+		if !ok || inv.Accepted || inv.Expired {
+			writeError(w, http.StatusNotFound, "Invite not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "team_invite", "id": inv.ID, "email": inv.Email, "role": inv.Role, "created_at": inv.CreatedAt, "expires_at": inv.ExpiresAt})
 	case method == http.MethodDelete && id != "":
 		if !f.callerManages() {
 			writeError(w, http.StatusForbidden, "Only team owners and admins can revoke invitations")

@@ -146,24 +146,39 @@ func (r *teamInviteResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	invites, err := r.client.ListTeamInvites(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError("Error listing team invitations", err.Error())
-		return
-	}
-	// The id, or an address on import.
+	// The id, or an address on import (found through the list).
 	id := state.ID.ValueString()
-	for i := range invites {
-		if invites[i].ID == id || (strings.Contains(id, "@") && invites[i].Email == id) {
-			mapTeamInviteToState(&invites[i], &state)
-			// The first read after an import records the send; later reads
-			// never change it.
-			if send, diags := loadInviteSend(ctx, req.Private); !diags.HasError() && send == nil {
-				resp.Diagnostics.Append(saveInviteSend(ctx, &invites[i], resp.Private)...)
-			}
-			resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
+	var found *client.TeamInvite
+	if strings.Contains(id, "@") {
+		invites, err := r.client.ListTeamInvites(ctx)
+		if err != nil {
+			resp.Diagnostics.AddError("Error listing team invitations", err.Error())
 			return
 		}
+		for i := range invites {
+			if invites[i].Email == id {
+				found = &invites[i]
+			}
+		}
+	} else {
+		inv, err := r.client.GetTeamInvite(ctx, id)
+		switch {
+		case err == nil:
+			found = inv
+		case !client.IsNotFound(err):
+			resp.Diagnostics.AddError("Error reading team invitation", err.Error())
+			return
+		}
+	}
+	if found != nil {
+		mapTeamInviteToState(found, &state)
+		// The first read after an import records the send; later reads
+		// never change it.
+		if send, diags := loadInviteSend(ctx, req.Private); !diags.HasError() && send == nil {
+			resp.Diagnostics.Append(saveInviteSend(ctx, found, resp.Private)...)
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
+		return
 	}
 
 	// Not pending any more: accepted if the address is on the team now,
@@ -208,9 +223,13 @@ func (r *teamInviteResource) Delete(ctx context.Context, req resource.DeleteRequ
 	// made, for example when its create_before_destroy replacement has just
 	// sent it again. Revoke it only while its expiry and role are still the
 	// ones in state.
-	invites, err := r.client.ListTeamInvites(ctx)
+	inv, err := r.client.GetTeamInvite(ctx, state.ID.ValueString())
+	if client.IsNotFound(err) {
+		// Accepted, expired or already revoked: nothing to revoke.
+		return
+	}
 	if err != nil {
-		resp.Diagnostics.AddError("Error listing team invitations", err.Error())
+		resp.Diagnostics.AddError("Error reading team invitation", err.Error())
 		return
 	}
 	// Compare with the send this instance made, kept in private state, which
@@ -223,13 +242,11 @@ func (r *teamInviteResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if send != nil {
 		wantExpires, wantRole = send.ExpiresAt, send.Role
 	}
-	for _, inv := range invites {
-		if inv.ID == state.ID.ValueString() && (inv.ExpiresAt != wantExpires || inv.Role != wantRole) {
-			resp.Diagnostics.AddWarning("Invitation left in place",
-				fmt.Sprintf("The invitation to %s was sent again after Terraform last read it (by a replacement of this resource, or from the dashboard), "+
-					"so it belongs to that newer send and was not revoked.", inv.Email))
-			return
-		}
+	if inv.ExpiresAt != wantExpires || inv.Role != wantRole {
+		resp.Diagnostics.AddWarning("Invitation left in place",
+			fmt.Sprintf("The invitation to %s was sent again after Terraform last read it (by a replacement of this resource, or from the dashboard), "+
+				"so it belongs to that newer send and was not revoked.", inv.Email))
+		return
 	}
 
 	if err := r.client.RevokeTeamInvite(ctx, state.ID.ValueString()); err != nil {
