@@ -135,3 +135,21 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	return nil
 }
+
+// listData reads a list response into out. Every list answers
+// { "object": "list", "data": [...] }; GET /v1/domains and GET /v1/api-keys
+// answered a bare array until October 2026, so that form is still accepted.
+func listData[T any](raw json.RawMessage, out *[]T) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		return json.Unmarshal(trimmed, out)
+	}
+	var body struct {
+		Data []T `json:"data"`
+	}
+	if err := json.Unmarshal(trimmed, &body); err != nil {
+		return fmt.Errorf("decoding list: %w", err)
+	}
+	*out = body.Data
+	return nil
+}
