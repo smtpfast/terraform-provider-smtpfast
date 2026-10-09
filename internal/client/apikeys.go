@@ -82,8 +82,12 @@ func (c *Client) CreateAPIKey(ctx context.Context, req CreateAPIKeyRequest) (*AP
 // ListAPIKeys returns the team's API keys (without secrets), revoked ones
 // included.
 func (c *Client) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
+	var raw json.RawMessage
+	if err := c.do(ctx, http.MethodGet, "/v1/api-keys", nil, &raw); err != nil {
+		return nil, err
+	}
 	var out []APIKey
-	if err := c.do(ctx, http.MethodGet, "/v1/api-keys", nil, &out); err != nil {
+	if err := listData(raw, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

@@ -170,6 +170,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// listBody is the shape every list answers with.
+func listBody(rows []map[string]any) map[string]any {
+	return map[string]any{"object": "list", "has_more": false, "data": rows}
+}
+
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
@@ -265,7 +270,7 @@ func (f *fakeAPI) serveAPIKeys(w http.ResponseWriter, method, id string, body ma
 		for _, k := range f.keys {
 			rows = append(rows, row(k))
 		}
-		writeJSON(w, http.StatusOK, rows)
+		writeJSON(w, http.StatusOK, listBody(rows))
 	case method == http.MethodPost && id == "":
 		scopes := append([]string(nil), defaultAPIKeyScopes...)
 		if raw, ok := body["scopes"]; ok {
@@ -570,9 +575,9 @@ func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body ma
 	case method == http.MethodGet && id == "":
 		rows := []map[string]any{}
 		for _, d := range f.domains {
-			rows = append(rows, map[string]any{"id": d.ID, "domain": d.Domain, "status": d.Status, "receivingEnabled": d.Receiving, "receivingStatus": "disabled"})
+			rows = append(rows, map[string]any{"id": d.ID, "domain": d.Domain, "status": d.Status, "receiving_enabled": d.Receiving, "receiving_status": "disabled"})
 		}
-		writeJSON(w, http.StatusOK, rows)
+		writeJSON(w, http.StatusOK, listBody(rows))
 		return
 	case method == http.MethodPost && id == "":
 		d := &fakeDomain{ID: f.nextID("dom"), Domain: body["domain"].(string), Status: "pending"}

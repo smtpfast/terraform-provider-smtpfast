@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 )
@@ -75,8 +76,12 @@ type DomainSummary struct {
 
 // ListDomains returns the team's sending domains, newest first.
 func (c *Client) ListDomains(ctx context.Context) ([]DomainSummary, error) {
+	var raw json.RawMessage
+	if err := c.do(ctx, http.MethodGet, "/v1/domains", nil, &raw); err != nil {
+		return nil, err
+	}
 	var out []DomainSummary
-	if err := c.do(ctx, http.MethodGet, "/v1/domains", nil, &out); err != nil {
+	if err := listData(raw, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

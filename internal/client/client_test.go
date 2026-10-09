@@ -152,20 +152,29 @@ func TestAPIErrorCode(t *testing.T) {
 	}
 }
 
+// The list object is the current shape; the bare array is what the API
+// answered before October 2026, and both have to keep working.
 func TestListDomains(t *testing.T) {
-	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/domains" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		_, _ = w.Write([]byte(`[{"id":"dom_1","domain":"mail.example.com","status":"verified","receivingEnabled":false}]`))
-	})
+	for name, body := range map[string]string{
+		"list object": `{"object":"list","has_more":false,"data":[{"id":"dom_1","domain":"mail.example.com","status":"verified","receiving_enabled":false}]}`,
+		"bare array":  `[{"id":"dom_1","domain":"mail.example.com","status":"verified","receivingEnabled":false}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/domains" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				_, _ = w.Write([]byte(body))
+			})
 
-	got, err := c.ListDomains(context.Background())
-	if err != nil {
-		t.Fatalf("ListDomains: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "dom_1" || got[0].Domain != "mail.example.com" {
-		t.Fatalf("unexpected domains: %+v", got)
+			got, err := c.ListDomains(context.Background())
+			if err != nil {
+				t.Fatalf("ListDomains: %v", err)
+			}
+			if len(got) != 1 || got[0].ID != "dom_1" || got[0].Domain != "mail.example.com" {
+				t.Fatalf("unexpected domains: %+v", got)
+			}
+		})
 	}
 }
 
@@ -199,10 +208,10 @@ func TestGetAPIKeySearchesTheList(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/api-keys" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`[
+		_, _ = w.Write([]byte(`{"object":"list","has_more":false,"data":[
 			{"id":"key_2","name":"old","keyPrefix":"sf_live_b","scopes":["email:send"],"createdAt":"2026-09-01T10:00:00.000Z","revokedAt":"2026-09-02T10:00:00.000Z","lastUsedAt":null},
 			{"id":"key_1","name":"ci","keyPrefix":"sf_live_a","scopes":["email:send","domain:read"],"createdAt":"2026-10-01T10:00:00.000Z","revokedAt":null,"lastUsedAt":null}
-		]`))
+		]}`))
 	})
 
 	got, err := c.GetAPIKey(context.Background(), "key_1")
@@ -307,5 +316,19 @@ func TestWebhookReadAndUpdateShapes(t *testing.T) {
 	}
 	if updated.Active || updated.CreatedAt != "" {
 		t.Fatalf("unexpected webhook: %+v", updated)
+	}
+}
+
+func TestListAPIKeysReadsTheOldBareArray(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":"key_1","name":"ci","keyPrefix":"sf_live_a","scopes":["email:send"],"createdAt":"2026-10-01T10:00:00.000Z","revokedAt":null}]`))
+	})
+
+	got, err := c.ListAPIKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListAPIKeys: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "key_1" || got[0].Prefix != "sf_live_a" {
+		t.Fatalf("unexpected keys: %+v", got)
 	}
 }
