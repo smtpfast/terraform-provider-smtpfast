@@ -105,6 +105,7 @@ func (p *smtpfastProvider) Configure(ctx context.Context, req provider.Configure
 func (p *smtpfastProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewDomainResource,
+		NewLinkDomainResource,
 		NewAPIKeyResource,
 		NewWebhookResource,
 		NewTemplateResource,

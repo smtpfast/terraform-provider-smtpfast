@@ -44,6 +44,26 @@ output "receiving_status" {
 }
 ```
 
+### Link domain
+
+Serve open tracking, click tracking and unsubscribe links from your own hostname instead of `smtpfa.st` (paid plans). The hostname must be a subdomain of a verified sending domain, and its CNAME record can be created in the same apply:
+
+```hcl
+resource "smtpfast_link_domain" "links" {
+  hostname = "links.example.com"
+}
+
+resource "cloudflare_record" "smtpfast_links" {
+  zone_id = var.cloudflare_zone_id
+  type    = "CNAME"
+  name    = smtpfast_link_domain.links.hostname
+  content = smtpfast_link_domain.links.cname_target
+  proxied = false
+}
+```
+
+The link domain turns `active` once SMTPfast sees the record and issues the certificate, usually within minutes.
+
 ### Templates
 
 Hosted templates are Resend-compatible, and sends always use the published version. The provider publishes every change it applies (`published = true` by default), so the template in your repo is the one your emails use:
@@ -115,6 +135,7 @@ Give the key the scopes for what you manage. The default set covers domains, web
 | Type | Name | Description |
 | --- | --- | --- |
 | Resource | `smtpfast_domain` | A sending domain, with its required DNS records as outputs and an inbound receiving toggle. |
+| Resource | `smtpfast_link_domain` | A custom hostname for tracking and unsubscribe links, with its CNAME record as an output (paid plans). |
 | Resource | `smtpfast_api_key` | An API key (the secret is returned once, on create). Name and scopes update in place. |
 | Resource | `smtpfast_webhook` | An event-delivery webhook, with its signing secret. |
 | Resource | `smtpfast_template` | A hosted email template, published whenever Terraform changes it. |
