@@ -38,6 +38,7 @@ type fakeAPI struct {
 	labels     map[string]*fakeLabel
 	members    map[string]*fakeMember
 	invites    map[string]*fakeInvite
+	links      map[string]*fakeLinkDomain
 
 	// callerRole is the team role of the API key's user ("owner", "admin" or
 	// "member"), and callerMemberID their membership. freeTeam turns off
@@ -106,6 +107,10 @@ type fakeMember struct {
 	Billing                            bool
 }
 
+type fakeLinkDomain struct {
+	ID, Hostname, DomainID, Domain, Status, CreatedAt string
+}
+
 type fakeInvite struct {
 	ID, Email, Role, CreatedAt, ExpiresAt string
 	Accepted, Expired                     bool
@@ -127,6 +132,7 @@ func newFakeAPI(t *testing.T) (*fakeAPI, string) {
 		labels:     map[string]*fakeLabel{},
 		members:    map[string]*fakeMember{},
 		invites:    map[string]*fakeInvite{},
+		links:      map[string]*fakeLinkDomain{},
 		callerRole: "owner",
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
@@ -225,6 +231,8 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveForms(w, r.Method, id, body)
 	case "segments":
 		f.serveSegments(w, r.Method, id, body)
+	case "link-domains":
+		f.serveLinkDomains(w, r.Method, id, body)
 	case "team":
 		sub := ""
 		if len(parts) > 2 {
@@ -1137,6 +1145,76 @@ func (f *fakeAPI) serveMembers(w http.ResponseWriter, method, id string, body ma
 		}
 		delete(f.members, id)
 		writeJSON(w, http.StatusOK, map[string]any{"object": "team_member", "id": id, "deleted": true})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// serveLinkDomains copies the link domains API: the hostname must sit under a
+// verified sending domain, one per sending domain, paid plans only.
+func (f *fakeAPI) serveLinkDomains(w http.ResponseWriter, method, id string, body map[string]any) {
+	row := func(l *fakeLinkDomain) map[string]any {
+		cnameStatus := "pending"
+		records := []map[string]any{}
+		if l.Status == "active" {
+			cnameStatus = "verified"
+		}
+		records = append(records, map[string]any{"type": "CNAME", "name": l.Hostname, "value": "links.smtpfa.st", "ttl": "Auto", "purpose": "Points the link domain at SMTPfast", "required": true, "status": cnameStatus})
+		if l.Status == "pending" {
+			records = append(records, map[string]any{"type": "TXT", "name": "_cf-custom-hostname." + l.Hostname, "value": "uuid-1", "ttl": "Auto", "purpose": "Ownership (optional, activates the hostname before the CNAME is live)", "required": false, "status": "pending"})
+		}
+		var verifiedAt any
+		if l.Status == "active" {
+			verifiedAt = "2026-10-01T10:05:00.000Z"
+		}
+		return map[string]any{
+			"object": "link_domain", "id": l.ID, "hostname": l.Hostname, "domain_id": l.DomainID, "domain": l.Domain,
+			"status": l.Status, "ssl_status": nil, "last_error": nil, "dns_records": records,
+			"verified_at": verifiedAt, "last_checked_at": nil, "created_at": l.CreatedAt,
+		}
+	}
+	if method == http.MethodPost && id == "" {
+		if f.freeTeam {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Custom link domains are on paid plans.", "code": "plan_upgrade_required"})
+			return
+		}
+		hostname := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(fmt.Sprint(body["hostname"]))), ".")
+		var parent *fakeDomain
+		for _, d := range f.domains {
+			if strings.HasSuffix(hostname, "."+d.Domain) && (parent == nil || len(d.Domain) > len(parent.Domain)) {
+				parent = d
+			}
+		}
+		if parent == nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": hostname + " must be a subdomain of one of your verified sending domains.", "code": "no_matching_domain"})
+			return
+		}
+		if parent.Status != "verified" {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "Verify " + parent.Domain + " first.", "code": "domain_not_verified"})
+			return
+		}
+		for _, l := range f.links {
+			if l.DomainID == parent.ID {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": parent.Domain + " already has a link domain (" + l.Hostname + "). Delete it first.", "code": "link_domain_exists"})
+				return
+			}
+		}
+		l := &fakeLinkDomain{ID: f.nextID("ld"), Hostname: hostname, DomainID: parent.ID, Domain: parent.Domain, Status: "pending", CreatedAt: f.now()}
+		f.links[l.ID] = l
+		writeJSON(w, http.StatusCreated, row(l))
+		return
+	}
+	l, ok := f.links[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "Link domain not found")
+		return
+	}
+	switch method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, row(l))
+	case http.MethodDelete:
+		delete(f.links, id)
+		writeJSON(w, http.StatusOK, map[string]any{"object": "link_domain", "id": l.ID, "deleted": true})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}

@@ -33,6 +33,11 @@
       "DELETE /v1/inboxes/{inbox_id}/labels/{label_id}",
       "GET /v1/inboxes/{inbox_id}/labels/{label_id}"
     ],
+    "smtpfast_link_domain": [
+      "POST /v1/link-domains",
+      "GET /v1/link-domains/{id}",
+      "DELETE /v1/link-domains/{id}"
+    ],
     "smtpfast_segment": [
       "POST /v1/segments",
       "GET /v1/segments",
@@ -133,7 +138,8 @@
         "POST /v1/templates/{id}/duplicate",
         "POST /v1/webhooks/{id}/test",
         "POST /v1/webhooks/{id}/signing-secret/rotate",
-        "POST /v1/forms/{id}/welcome-preview"
+        "POST /v1/forms/{id}/welcome-preview",
+        "POST /v1/link-domains/{id}/refresh"
       ]
     },
     {
@@ -154,6 +160,7 @@
         "GET /v1/contact-properties",
         "GET /v1/forms",
         "GET /v1/inboxes",
+        "GET /v1/link-domains",
         "GET /v1/templates",
         "GET /v1/webhooks"
       ]
