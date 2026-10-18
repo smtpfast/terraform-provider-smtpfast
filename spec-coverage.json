@@ -149,9 +149,10 @@
       ]
     },
     {
-      "reason": "Domain Connect returns a link a person opens in Cloudflare. With Terraform, publish dns_records through a DNS provider instead.",
+      "reason": "Domain Connect returns a link a person opens at their DNS provider. With Terraform, publish dns_records through a DNS provider instead.",
       "rules": [
-        "/v1/domains/{id}/domain-connect/**"
+        "/v1/domains/{id}/domain-connect/**",
+        "/v1/link-domains/{id}/domain-connect/**"
       ]
     },
     {
