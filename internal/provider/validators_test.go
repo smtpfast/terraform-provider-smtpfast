@@ -80,7 +80,7 @@ func TestReconcileStringListKeepsOrder(t *testing.T) {
 }
 
 func TestDefaultScopesMatchTheAPIDefault(t *testing.T) {
-	excluded := map[string]bool{"logs:read": true, "inbound:read": true, "inbound:delete": true, "team:read": true, "team:manage": true, "apikey:manage": true}
+	excluded := map[string]bool{"logs:read": true, "inbound:read": true, "inbound:delete": true, "team:read": true, "team:manage": true, "billing:read": true, "billing:manage": true, "apikey:manage": true}
 	var want []string
 	for _, s := range allAPIKeyScopes {
 		if !excluded[s] {

@@ -1,5 +1,6 @@
 # A key with the API's default scopes: everything except logs:read,
-# inbound:read, inbound:delete, team:read, team:manage and apikey:manage.
+# inbound:read, inbound:delete, team:read, team:manage, billing:read,
+# billing:manage and apikey:manage.
 resource "smtpfast_api_key" "ci" {
   name = "ci-pipeline"
 }

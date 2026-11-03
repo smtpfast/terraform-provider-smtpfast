@@ -17,7 +17,8 @@ Managing API keys needs a provider API key with the `apikey:manage` scope, creat
 
 ```terraform
 # A key with the API's default scopes: everything except logs:read,
-# inbound:read, inbound:delete, team:read, team:manage and apikey:manage.
+# inbound:read, inbound:delete, team:read, team:manage, billing:read,
+# billing:manage and apikey:manage.
 resource "smtpfast_api_key" "ci" {
   name = "ci-pipeline"
 }
@@ -44,7 +45,7 @@ output "ci_api_key" {
 
 ### Optional
 
-- `scopes` (List of String) What the key may do. One or more of `email:send`, `email:read`, `domain:read`, `domain:write`, `contact:read`, `contact:write`, `form:read`, `form:write`, `webhook:read`, `webhook:write`, `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage`, `apikey:manage`. When omitted, the key gets the API's default set: every scope except `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage` and `apikey:manage`. Order does not matter. Updates in place, and changes made outside Terraform show up as drift.
+- `scopes` (List of String) What the key may do. One or more of `email:send`, `email:read`, `domain:read`, `domain:write`, `contact:read`, `contact:write`, `form:read`, `form:write`, `webhook:read`, `webhook:write`, `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage`, `billing:read`, `billing:manage`, `apikey:manage`. When omitted, the key gets the API's default set: every scope except `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage`, `billing:read`, `billing:manage` and `apikey:manage`. Order does not matter. Updates in place, and changes made outside Terraform show up as drift.
 
 ### Read-Only
 

@@ -67,7 +67,7 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"scopes": schema.ListAttribute{
 				MarkdownDescription: "What the key may do. One or more of " + backtickList(allAPIKeyScopes) + ". " +
-					"When omitted, the key gets the API's default set: every scope except `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage` and `apikey:manage`. " +
+					"When omitted, the key gets the API's default set: every scope except `logs:read`, `inbound:read`, `inbound:delete`, `team:read`, `team:manage`, `billing:read`, `billing:manage` and `apikey:manage`. " +
 					"Order does not matter. Updates in place, and changes made outside Terraform show up as drift.",
 				Optional:    true,
 				Computed:    true,
