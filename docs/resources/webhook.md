@@ -46,7 +46,7 @@ resource "smtpfast_webhook" "alerts" {
 
 ### Required
 
-- `events` (List of String) Event types to subscribe to. One or more of `email.scheduled`, `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.opened`, `email.clicked`, `email.failed`, `email.suppressed`, `email.unsubscribed`, `email.received`, `domain.created`, `domain.updated`, `domain.deleted`, `contact.created`, `contact.updated`, `contact.deleted`, `contact.subscribed`. Order does not matter.
+- `events` (List of String) Event types to subscribe to. One or more of `email.scheduled`, `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.opened`, `email.clicked`, `email.failed`, `email.suppressed`, `email.unsubscribed`, `email.received`, `domain.created`, `domain.updated`, `domain.deleted`, `contact.created`, `contact.updated`, `contact.deleted`, `contact.subscribed`, `inbox.email.received`, `inbox.thread.assigned`, `inbox.thread.unassigned`. Order does not matter.
 - `url` (String) The HTTPS URL that receives webhook POST requests. It must be publicly reachable: localhost and private addresses are refused.
 
 ### Optional

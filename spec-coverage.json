@@ -177,6 +177,24 @@
       "rules": [
         "GET /v1/me"
       ]
+    },
+    {
+      "reason": "Billing is the team owner's plan and payment. The API reports usage and returns Stripe links that a person opens; there is nothing for Terraform to hold.",
+      "rules": [
+        "/v1/billing/**"
+      ]
+    },
+    {
+      "reason": "Activation moves a new pending account to active once, with an invite code, a free-trial request or a paid plan. A one-time step, not desired state.",
+      "rules": [
+        "/v1/account/activation/**"
+      ]
+    },
+    {
+      "reason": "The CLI's device login and emailed-code signup, which give a terminal its first API key. Terraform starts from a key that already exists.",
+      "rules": [
+        "/v1/cli/**"
+      ]
     }
   ]
 }

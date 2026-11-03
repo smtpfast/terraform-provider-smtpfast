@@ -30,12 +30,14 @@ var allAPIKeyScopes = []string{
 	"inbound:delete",
 	"team:read",
 	"team:manage",
+	"billing:read",
+	"billing:manage",
 	"apikey:manage",
 }
 
 // defaultAPIKeyScopes is what the API grants a key created without scopes:
 // everything except logs:read, inbound:read, inbound:delete, team:read,
-// team:manage and apikey:manage.
+// team:manage, billing:read, billing:manage and apikey:manage.
 var defaultAPIKeyScopes = allAPIKeyScopes[:10]
 
 // webhookEvents are the event types a webhook can subscribe to.
@@ -59,6 +61,9 @@ var webhookEvents = []string{
 	"contact.updated",
 	"contact.deleted",
 	"contact.subscribed",
+	"inbox.email.received",
+	"inbox.thread.assigned",
+	"inbox.thread.unassigned",
 }
 
 var webhookFormats = []string{"standard", "discord", "slack"}
