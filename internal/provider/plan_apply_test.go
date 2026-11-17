@@ -528,8 +528,17 @@ func TestPlanApplyDomainDataSourceByName(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "id", "dom_1"),
 					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "status", "verified"),
-					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "dns_records.3.priority", "10"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "dns_records.5.priority", "10"),
 					resource.TestCheckNoResourceAttr("data.smtpfast_domain.test", "dns_records.1.priority"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "dns_records.3.purpose", "SPF authorization"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "records.%", "7"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "records.dkim_2.name", "tok2._domainkey.mail.example.com"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "records.mail_from_mx.priority", "10"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "records.dmarc.category", "verification"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "region", "eu-west-2"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "mail_from_domain", "bounce.mail.example.com"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "spf_include", "amazonses.com"),
+					resource.TestCheckResourceAttr("data.smtpfast_domain.test", "dkim_status", "verified"),
 				),
 			},
 			{
@@ -576,8 +585,8 @@ resource "terraform_data" "record" {
 			{
 				Config: config(""),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.#", "5"),
-					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.3.priority", "10"),
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.#", "7"),
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.5.priority", "10"),
 					resource.TestCheckResourceAttr("smtpfast_domain.test", "receiving_enabled", "false"),
 				),
 			},
@@ -589,16 +598,17 @@ resource "terraform_data" "record" {
 				},
 				Config: config("  receiving_enabled = true"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.#", "6"),
-					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.5.name", "mail.example.com"),
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.#", "8"),
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.7.name", "mail.example.com"),
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.7.purpose", "Inbound mail"),
 					resource.TestCheckResourceAttr("smtpfast_domain.test", "receiving_status", "pending"),
-					resource.TestCheckResourceAttr("terraform_data.record.5", "output.type", "MX"),
+					resource.TestCheckResourceAttr("terraform_data.record.7", "output.type", "MX"),
 				),
 			},
 			{
 				Config: config("  receiving_enabled = false"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.#", "5"),
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "dns_records.#", "7"),
 					resource.TestCheckResourceAttr("smtpfast_domain.test", "receiving_status", "disabled"),
 				),
 			},

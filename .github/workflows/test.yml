@@ -29,6 +29,42 @@ jobs:
       - name: Unit tests
         run: go test ./... -count=1 -timeout 120s
 
+  example:
+    name: Cloudflare example plans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      # Plans the guide's configuration against this build, with the real
+      # Cloudflare provider and no SMTPfast key: the for_each over records
+      # must plan before the domain exists, and nothing may call the API.
+      - name: Plan examples/cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          CHECKPOINT_DISABLE: "1"
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -o "$RUNNER_TEMP/bin/terraform-provider-smtpfast" .
+          cat > "$RUNNER_TEMP/dev.tfrc" <<EOF
+          provider_installation {
+            dev_overrides {
+              "smtpfast/smtpfast" = "$RUNNER_TEMP/bin"
+            }
+            direct {}
+          }
+          EOF
+          export TF_CLI_CONFIG_FILE="$RUNNER_TEMP/dev.tfrc"
+          cd examples/cloudflare
+          terraform init -input=false
+          terraform validate
+          terraform plan -input=false -var domain=example.com -var cloudflare_zone_id=023e105f4ecef8ad9ca31a8372d0c353 -var 'spf_includes=["_spf.google.com"]'
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

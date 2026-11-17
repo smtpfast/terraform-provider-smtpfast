@@ -8,6 +8,10 @@ data "smtpfast_domain" "by_id" {
   id = "dom_xyz789"
 }
 
-output "domain_dns_records" {
-  value = data.smtpfast_domain.example.dns_records
+output "domain_records" {
+  value = data.smtpfast_domain.example.records
+}
+
+output "spf_record_name" {
+  value = data.smtpfast_domain.example.records["spf"].name
 }

@@ -3,46 +3,64 @@
 page_title: "smtpfast_domain Resource - smtpfast"
 subcategory: ""
 description: |-
-  A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine dns_records with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain from one configuration.
-  The records are only known once the domain exists, so a for_each over them cannot plan before that: on the first run, apply the domain alone with -target, then apply everything. After that, turning receiving on or off keeps dns_records known at plan time.
+  A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Publish records with your DNS provider (Cloudflare, Route 53, ...) to set up the whole sending domain in one apply, and add a smtpfast_domain_verification to wait until it can send.
+  records is a map with fixed keys (dkim_1, dkim_2, dkim_3, spf, dmarc, mail_from_mx, mail_from_spf, and receiving_mx while receiving is on), so a for_each over it plans before the domain exists. Use the keys as the for_each keys: a change of a record's value then updates that DNS record in place.
+  SPF: a domain may have only one SPF record. If the domain already sends through another service, merge SMTPfast into the existing record with spf_include instead of adding a second one (SMTPfast then reports multiple_spf_records).
+  Deleting the domain stops all sending from it, and adding it again gives new DKIM records. For a production domain, add lifecycle { prevent_destroy = true }.
   Needs a provider API key with the domain:read and domain:write scopes, created by a team owner or admin.
 ---
 
 # smtpfast_domain (Resource)
 
-A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Combine `dns_records` with your DNS provider (Cloudflare, Route 53, ...) to provision the whole sending domain from one configuration.
+A sending domain on SMTPfast. Creating one returns the DNS records you must publish (DKIM, SPF, DMARC, MAIL FROM) to verify it. Publish `records` with your DNS provider (Cloudflare, Route 53, ...) to set up the whole sending domain in one apply, and add a `smtpfast_domain_verification` to wait until it can send.
 
-The records are only known once the domain exists, so a `for_each` over them cannot plan before that: on the first run, apply the domain alone with `-target`, then apply everything. After that, turning receiving on or off keeps `dns_records` known at plan time.
+`records` is a map with fixed keys (`dkim_1`, `dkim_2`, `dkim_3`, `spf`, `dmarc`, `mail_from_mx`, `mail_from_spf`, and `receiving_mx` while receiving is on), so a `for_each` over it plans before the domain exists. Use the keys as the `for_each` keys: a change of a record's value then updates that DNS record in place.
+
+SPF: a domain may have only one SPF record. If the domain already sends through another service, merge SMTPfast into the existing record with `spf_include` instead of adding a second one (SMTPfast then reports `multiple_spf_records`).
+
+Deleting the domain stops all sending from it, and adding it again gives new DKIM records. For a production domain, add `lifecycle { prevent_destroy = true }`.
 
 Needs a provider API key with the `domain:read` and `domain:write` scopes, created by a team owner or admin.
 
 ## Example Usage
 
 ```terraform
-# Register a sending domain and publish its DNS records to Cloudflare. Swap
-# cloudflare_record for aws_route53_record, etc. as needed.
-#
-# The records are only known once the domain exists, so on the first run apply
-# the domain alone (terraform apply -target=smtpfast_domain.example), then
-# apply everything.
+# Register a sending domain and publish its DNS records to Cloudflare in one
+# apply. The keys of records (dkim_1, dkim_2, dkim_3, spf, dmarc, mail_from_mx,
+# mail_from_spf) are known before the domain exists, so the for_each plans on
+# the first run. This uses the Cloudflare provider v5 (cloudflare_dns_record,
+# ttl required). The "Cloudflare" guide has a complete configuration.
 
 resource "smtpfast_domain" "example" {
   domain = "mail.example.com"
+
+  # Deleting the domain stops all sending from it, and adding it again gives
+  # new DKIM records.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
-resource "cloudflare_record" "smtpfast" {
-  for_each = { for idx, rec in smtpfast_domain.example.dns_records : idx => rec }
+resource "cloudflare_dns_record" "smtpfast" {
+  for_each = smtpfast_domain.example.records
 
   zone_id  = var.cloudflare_zone_id
   type     = each.value.type
   name     = each.value.name
   content  = each.value.value
-  priority = each.value.priority # set on MX records only, null otherwise
-  proxied  = false
+  priority = each.value.priority # MX records only, null otherwise
+  ttl      = 1                   # automatic
+  proxied  = false               # a proxied DKIM CNAME does not resolve
 }
 
-output "domain_status" {
-  value = smtpfast_domain.example.status
+# Wait until the domain can send.
+resource "smtpfast_domain_verification" "example" {
+  domain_id  = smtpfast_domain.example.id
+  depends_on = [cloudflare_dns_record.smtpfast]
+}
+
+output "ses_region" {
+  value = smtpfast_domain.example.region
 }
 ```
 
@@ -55,22 +73,45 @@ output "domain_status" {
 
 ### Optional
 
-- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must be verified for sending, or be a subdomain of a domain that is already verified on the team. For a brand-new domain that is not such a subdomain, set this in a later apply once `status` is `verified`. When enabled, `dns_records` gains the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.
+- `receiving_enabled` (Boolean) Turn inbound email on for this domain (paid plans). The domain must be verified for sending, or be a subdomain of a domain that is already verified on the team. For a brand-new domain that is not such a subdomain, set this in a later apply once `status` is `verified`. When enabled, `records` gains `receiving_mx`, the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.
 
 ### Read-Only
 
-- `dns_records` (Attributes List) DNS records to publish to verify and enable the domain. (see [below for nested schema](#nestedatt--dns_records))
+- `dkim_status` (String) DKIM status from the last check: `pending` or `verified`.
+- `dmarc_status` (String) DMARC status from the last check: `pending` or `verified`. DMARC does not gate sending.
+- `dns_records` (Attributes List, Deprecated) **Deprecated**: use `records`. The same records as a list, which is unknown until the domain exists, so a `for_each` over it needs a `-target` apply first. (see [below for nested schema](#nestedatt--dns_records))
 - `id` (String) Unique identifier of the domain.
+- `mail_from_domain` (String) The custom MAIL FROM (bounce) domain, always `bounce.<domain>`. Its MX and SPF records are `records.mail_from_mx` and `records.mail_from_spf`.
+- `mail_from_status` (String) Custom MAIL FROM status from the last check: `pending`, `verified`, or `failed`.
 - `receiving_status` (String) Inbound status: `disabled`, `pending` (MX record not seen yet), `active`, or `failed` (another MX record ties or outranks ours).
-- `status` (String) Verification status: `pending`, `verified`, or `failed`.
+- `records` (Attributes Map) DNS records to publish, keyed by role: `dkim_1`, `dkim_2`, `dkim_3`, `spf`, `dmarc`, `mail_from_mx`, `mail_from_spf`, and `receiving_mx` while receiving is on. The keys are known when the domain is planned, before it exists, so `for_each = smtpfast_domain.example.records` works on the first apply. (see [below for nested schema](#nestedatt--records))
+- `region` (String) The Amazon SES region that sends for this domain, such as `eu-west-2`. SMTPfast picks it; there is no input for it.
+- `spf_include` (String) The domain SMTPfast needs in the apex SPF record, such as `amazonses.com`. Use it to merge SMTPfast into an SPF record that already lists other senders: `include:${smtpfast_domain.example.spf_include}`. A domain must have only one SPF record.
+- `spf_status` (String) SPF status from the last check: `pending` or `verified`. SPF does not gate sending.
+- `status` (String) Verification status: `pending`, `verified`, or `failed`. `verified` means the domain can send. To wait for it in the same apply, add a `smtpfast_domain_verification`.
 
 <a id="nestedatt--dns_records"></a>
 ### Nested Schema for `dns_records`
 
 Read-Only:
 
+- `category` (String) Record group: `verification` (DKIM, DMARC), `sending` (SPF, MAIL FROM) or `receiving` (inbound MX).
 - `name` (String) Record name/host.
 - `priority` (Number) Priority, set on MX records only.
+- `purpose` (String) What the record is for, as the API words it, such as `DKIM authentication`, `SPF authorization`, `DMARC policy`, `MAIL FROM bounce delivery`, `MAIL FROM SPF` or `Inbound mail`.
+- `type` (String) DNS record type (CNAME, TXT, MX).
+- `value` (String) Record value.
+
+
+<a id="nestedatt--records"></a>
+### Nested Schema for `records`
+
+Read-Only:
+
+- `category` (String) Record group: `verification` (DKIM, DMARC), `sending` (SPF, MAIL FROM) or `receiving` (inbound MX).
+- `name` (String) Record name/host.
+- `priority` (Number) Priority, set on MX records only.
+- `purpose` (String) What the record is for, as the API words it, such as `DKIM authentication`, `SPF authorization`, `DMARC policy`, `MAIL FROM bounce delivery`, `MAIL FROM SPF` or `Inbound mail`.
 - `type` (String) DNS record type (CNAME, TXT, MX).
 - `value` (String) Record value.
 

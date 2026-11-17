@@ -1,6 +1,7 @@
 # Serve open tracking, click tracking and unsubscribe links from your own
 # hostname, and publish its CNAME record to Cloudflare in the same apply.
-# Swap cloudflare_record for aws_route53_record, etc. as needed.
+# This uses the Cloudflare provider v5; swap cloudflare_dns_record for
+# aws_route53_record, etc. as needed.
 #
 # The hostname must be a subdomain of a verified sending domain on the team.
 
@@ -8,11 +9,12 @@ resource "smtpfast_link_domain" "links" {
   hostname = "links.example.com"
 }
 
-resource "cloudflare_record" "smtpfast_links" {
+resource "cloudflare_dns_record" "smtpfast_links" {
   zone_id = var.cloudflare_zone_id
   type    = "CNAME"
   name    = smtpfast_link_domain.links.hostname
   content = smtpfast_link_domain.links.cname_target
+  ttl     = 1
   proxied = false # DNS only: SMTPfast issues the certificate for the hostname
 }
 

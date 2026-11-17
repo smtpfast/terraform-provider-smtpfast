@@ -77,3 +77,27 @@ func (m keepStateOrDefaultStringList) PlanModifyList(_ context.Context, req plan
 	}
 	resp.PlanValue = req.StateValue
 }
+
+// useKnownStateForUnknown is UseStateForUnknown for a computed value that
+// state from an older provider version lacks: it copies the state value only
+// when there is one, so a null from that older state is never planned as the
+// value the apply must return.
+type useKnownStateForUnknown struct{}
+
+func (useKnownStateForUnknown) Description(context.Context) string {
+	return "Keeps the current value, once it has one, until the resource is replaced."
+}
+
+func (m useKnownStateForUnknown) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (useKnownStateForUnknown) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.State.Raw.IsNull() || !req.PlanValue.IsUnknown() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+}

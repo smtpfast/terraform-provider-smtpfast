@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -330,5 +331,31 @@ func TestListAPIKeysReadsTheOldBareArray(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "key_1" || got[0].Prefix != "sf_live_a" {
 		t.Fatalf("unexpected keys: %+v", got)
+	}
+}
+
+func TestVerifyDomain(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/domains/dom_1/verify" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"domain":"example.com","status":"pending","verification_phase":"dns_missing","checks":{"dkim":"verified","spf":"pending","dmarc":"verified","mail_from":"pending"},"message":"Some records are missing."}`))
+	})
+	got, err := c.VerifyDomain(context.Background(), "dom_1")
+	if err != nil {
+		t.Fatalf("VerifyDomain: %v", err)
+	}
+	if got.Status != "pending" || got.Phase != "dns_missing" || got.Checks["spf"] != "pending" || got.Domain != "example.com" {
+		t.Fatalf("unexpected verification: %+v", got)
+	}
+}
+
+func TestKeyErrorStopsTheRequest(t *testing.T) {
+	c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("request sent without a key: %s %s", r.Method, r.URL.Path)
+	})
+	c.KeyError = errors.New("missing SMTPfast API key")
+	if _, err := c.GetDomain(context.Background(), "dom_1"); err == nil || err.Error() != "missing SMTPfast API key" {
+		t.Fatalf("GetDomain error = %v", err)
 	}
 }
