@@ -26,6 +26,10 @@ type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
 	UserAgent  string
+	// KeyError, when set, is returned by every call instead of sending the
+	// request. The provider sets it when it has no usable API key, so a
+	// configuration that never calls the API still plans without one.
+	KeyError error
 }
 
 // New builds a Client. An empty baseURL falls back to the production API.
@@ -74,6 +78,9 @@ func ErrorCode(err error) string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	if c.KeyError != nil {
+		return c.KeyError
+	}
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

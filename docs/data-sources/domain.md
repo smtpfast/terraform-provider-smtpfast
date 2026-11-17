@@ -23,8 +23,12 @@ data "smtpfast_domain" "by_id" {
   id = "dom_xyz789"
 }
 
-output "domain_dns_records" {
-  value = data.smtpfast_domain.example.dns_records
+output "domain_records" {
+  value = data.smtpfast_domain.example.records
+}
+
+output "spf_record_name" {
+  value = data.smtpfast_domain.example.records["spf"].name
 }
 ```
 
@@ -38,9 +42,17 @@ output "domain_dns_records" {
 
 ### Read-Only
 
-- `dns_records` (Attributes List) DNS records required to verify the domain. (see [below for nested schema](#nestedatt--dns_records))
+- `dkim_status` (String) DKIM status from the last check: `pending` or `verified`.
+- `dmarc_status` (String) DMARC status from the last check: `pending` or `verified`.
+- `dns_records` (Attributes List, Deprecated) **Deprecated**: use `records`. DNS records required to verify the domain, as a list. (see [below for nested schema](#nestedatt--dns_records))
+- `mail_from_domain` (String) The custom MAIL FROM (bounce) domain, `bounce.<domain>`.
+- `mail_from_status` (String) Custom MAIL FROM status from the last check: `pending`, `verified`, or `failed`.
 - `receiving_enabled` (Boolean) Whether inbound email is turned on for this domain.
 - `receiving_status` (String) Inbound status: `disabled`, `pending`, `active`, or `failed`.
+- `records` (Attributes Map) DNS records required to verify the domain, keyed by role: `dkim_1`, `dkim_2`, `dkim_3`, `spf`, `dmarc`, `mail_from_mx`, `mail_from_spf`, and `receiving_mx` while receiving is on. (see [below for nested schema](#nestedatt--records))
+- `region` (String) The Amazon SES region that sends for this domain, such as `eu-west-2`.
+- `spf_include` (String) The domain SMTPfast needs in the apex SPF record, such as `amazonses.com`, to merge into an existing SPF record.
+- `spf_status` (String) SPF status from the last check: `pending` or `verified`.
 - `status` (String) Verification status: `pending`, `verified`, or `failed`.
 
 <a id="nestedatt--dns_records"></a>
@@ -48,7 +60,22 @@ output "domain_dns_records" {
 
 Read-Only:
 
+- `category` (String) Record group: `verification`, `sending` or `receiving`.
 - `name` (String) Record name/host.
 - `priority` (Number) Priority, set on MX records only.
+- `purpose` (String) What the record is for, as the API words it, such as `SPF authorization`.
+- `type` (String) DNS record type (CNAME, TXT, MX).
+- `value` (String) Record value.
+
+
+<a id="nestedatt--records"></a>
+### Nested Schema for `records`
+
+Read-Only:
+
+- `category` (String) Record group: `verification`, `sending` or `receiving`.
+- `name` (String) Record name/host.
+- `priority` (Number) Priority, set on MX records only.
+- `purpose` (String) What the record is for, as the API words it, such as `SPF authorization`.
 - `type` (String) DNS record type (CNAME, TXT, MX).
 - `value` (String) Record value.

@@ -20,6 +20,10 @@
       "PATCH /v1/domains/{id}",
       "DELETE /v1/domains/{id}"
     ],
+    "smtpfast_domain_verification": [
+      "POST /v1/domains/{id}/verify",
+      "GET /v1/domains/{id}"
+    ],
     "smtpfast_inbox": [
       "POST /v1/inboxes",
       "GET /v1/inboxes/{id}",
@@ -134,7 +138,6 @@
     {
       "reason": "One-off actions with no state for Terraform to hold.",
       "rules": [
-        "POST /v1/domains/{id}/verify",
         "POST /v1/templates/{id}/duplicate",
         "POST /v1/webhooks/{id}/test",
         "POST /v1/webhooks/{id}/signing-secret/rotate",

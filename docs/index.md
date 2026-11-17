@@ -4,6 +4,8 @@ page_title: "smtpfast Provider"
 description: |-
   The SMTPfast provider manages resources on SMTPfast https://smtpfa.st, a transactional email API: sending domains, API keys, webhooks, templates, inboxes and their labels, contact properties, segments, signup forms, and the team's members and invitations.
   Each resource needs the provider's API key to hold the scopes its page lists. A key created without scopes gets the default set, which does not include apikey:manage, inbound:read, team:read or team:manage: managing smtpfast_api_key, smtpfast_inbox, smtpfast_inbox_label, smtpfast_team_invite and smtpfast_team_member needs a key created with them.
+  Use two keys. Terraform's key manages the setup: for a sending domain and the app's key it needs domain:read, domain:write and apikey:manage; create it in the dashboard (as a team owner or admin) and keep it with Terraform. The app gets its own key from smtpfast_api_key with scopes = ["email:send"], which cannot change the domain or create keys. The Cloudflare guide guides/cloudflare shows both.
+  The key is checked when a resource or data source calls the API, so a configuration where nothing uses SMTPfast (such as count = 0 in one environment) plans and applies without one.
 ---
 
 # smtpfast Provider
@@ -11,6 +13,10 @@ description: |-
 The SMTPfast provider manages resources on [SMTPfast](https://smtpfa.st), a transactional email API: sending domains, API keys, webhooks, templates, inboxes and their labels, contact properties, segments, signup forms, and the team's members and invitations.
 
 Each resource needs the provider's API key to hold the scopes its page lists. A key created without scopes gets the default set, which does not include `apikey:manage`, `inbound:read`, `team:read` or `team:manage`: managing `smtpfast_api_key`, `smtpfast_inbox`, `smtpfast_inbox_label`, `smtpfast_team_invite` and `smtpfast_team_member` needs a key created with them.
+
+Use two keys. Terraform's key manages the setup: for a sending domain and the app's key it needs `domain:read`, `domain:write` and `apikey:manage`; create it in the dashboard (as a team owner or admin) and keep it with Terraform. The app gets its own key from `smtpfast_api_key` with `scopes = ["email:send"]`, which cannot change the domain or create keys. The [Cloudflare guide](guides/cloudflare) shows both.
+
+The key is checked when a resource or data source calls the API, so a configuration where nothing uses SMTPfast (such as `count = 0` in one environment) plans and applies without one.
 
 ## Example Usage
 
@@ -34,5 +40,5 @@ provider "smtpfast" {
 
 ### Optional
 
-- `api_key` (String, Sensitive) SMTPfast API key. Can also be set with the `SMTPFAST_API_KEY` environment variable. Create one in the [SMTPfast dashboard](https://smtpfa.st).
+- `api_key` (String, Sensitive) SMTPfast API key. Can also be set with the `SMTPFAST_API_KEY` environment variable. Create one in the [SMTPfast dashboard](https://smtpfa.st). Needed only when a resource or data source calls the API.
 - `base_url` (String) Base URL of the SMTPfast API. Defaults to `https://smtpfa.st/api`. Can also be set with the `SMTPFAST_API_URL` environment variable.

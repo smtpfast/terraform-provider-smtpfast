@@ -6,32 +6,46 @@ Built with the [Terraform Plugin Framework](https://developer.hashicorp.com/terr
 
 ## Why
 
-The headline feature is **sending domains with their DNS records as outputs**. Register a domain and publish its DKIM/SPF/DMARC/MAIL FROM records to your DNS provider from the same configuration:
+The headline feature is **sending domains with their DNS records as outputs**. Register a domain, publish its DKIM/SPF/DMARC/MAIL FROM records to your DNS provider and wait until it can send, all in one `terraform apply`:
 
 ```hcl
 resource "smtpfast_domain" "example" {
   domain = "mail.example.com"
+
+  lifecycle {
+    prevent_destroy = true # deleting the domain stops all sending from it
+  }
 }
 
-# The records SMTPfast needs, published to Cloudflare (swap for Route 53, etc.)
-resource "cloudflare_record" "smtpfast" {
-  for_each = { for idx, rec in smtpfast_domain.example.dns_records : idx => rec }
+# The records SMTPfast needs, published to Cloudflare (provider v5; swap for Route 53, etc.)
+resource "cloudflare_dns_record" "smtpfast" {
+  for_each = smtpfast_domain.example.records
 
   zone_id  = var.cloudflare_zone_id
   type     = each.value.type
   name     = each.value.name
   content  = each.value.value
   priority = each.value.priority # set on MX records only, null otherwise
+  ttl      = 1
+  proxied  = false
+}
+
+# Waits until SMTPfast sees the records and the domain can send.
+resource "smtpfast_domain_verification" "example" {
+  domain_id  = smtpfast_domain.example.id
+  depends_on = [cloudflare_dns_record.smtpfast]
 }
 ```
 
-No copy-pasting DNS records from a dashboard.
+No copy-pasting DNS records from a dashboard, and no `-target` step: the keys of `records` (`dkim_1`, `dkim_2`, `dkim_3`, `spf`, `dmarc`, `mail_from_mx`, `mail_from_spf`) are known before the domain exists, so the `for_each` plans on the first run. Each record has its `purpose` and `category`, and the domain has its `region`, `mail_from_domain` and `spf_include`.
 
-The records only exist once the domain does, and `for_each` needs to know them when it plans. So on the very first run, create the domain on its own with `terraform apply -target=smtpfast_domain.example`, then run a normal `terraform apply`. From then on a single apply keeps everything in step, including turning receiving on or off.
+A domain may have only one SPF record. If it already sends through another service, merge SMTPfast into that record with `spf_include` (`amazonses.com`) instead of adding a second one. The [Cloudflare guide](docs/guides/cloudflare.md) has a complete, CI-tested configuration with the SPF merge and a send-only key for the app.
+
+`dns_records`, the same records as a list, still works but is deprecated: it is unknown until the domain exists, so a `for_each` over it needs a `terraform apply -target=smtpfast_domain.example` first.
 
 ### Inbound email
 
-Once a domain is verified, turn on receiving and the MX record shows up in `dns_records` like any other record, so the same `for_each` publishes it:
+Once a domain is verified, turn on receiving and the MX record shows up in `records` as `receiving_mx`, so the same `for_each` publishes it:
 
 ```hcl
 resource "smtpfast_domain" "inbound" {
@@ -53,11 +67,12 @@ resource "smtpfast_link_domain" "links" {
   hostname = "links.example.com"
 }
 
-resource "cloudflare_record" "smtpfast_links" {
+resource "cloudflare_dns_record" "smtpfast_links" {
   zone_id = var.cloudflare_zone_id
   type    = "CNAME"
   name    = smtpfast_link_domain.links.hostname
   content = smtpfast_link_domain.links.cname_target
+  ttl     = 1
   proxied = false
 }
 ```
@@ -128,13 +143,18 @@ Create an API key in the [SMTPfast dashboard](https://smtpfa.st) and export it:
 export SMTPFAST_API_KEY="sf_live_..."
 ```
 
+Use two keys. Terraform's key manages the setup; for a sending domain and the app's key it needs `domain:read`, `domain:write` and `apikey:manage`. Create it in the dashboard (as a team owner or admin) and keep it with Terraform. The app gets its own key from `smtpfast_api_key` with `scopes = ["email:send"]`, so a leaked app key cannot change the domain or create keys.
+
+The provider checks the key only when a resource or data source calls the API. A configuration where nothing uses SMTPfast in one environment (`count = 0` in staging, say) plans and applies there without a key.
+
 Give the key the scopes for what you manage. The default set covers domains, webhooks, templates, contact properties, segments and signup forms. Add `apikey:manage` to manage `smtpfast_api_key`, `inbound:read` for `smtpfast_inbox` and `smtpfast_inbox_label`, and `team:read` and `team:manage` for `smtpfast_team_invite` and `smtpfast_team_member`. Each resource page lists its scopes.
 
 ### Resources and data sources
 
 | Type | Name | Description |
 | --- | --- | --- |
-| Resource | `smtpfast_domain` | A sending domain, with its required DNS records as outputs and an inbound receiving toggle. |
+| Resource | `smtpfast_domain` | A sending domain, with its required DNS records as outputs (keyed by role, known at plan time) and an inbound receiving toggle. |
+| Resource | `smtpfast_domain_verification` | Waits until a sending domain is verified, with the records SMTPfast does not see yet on timeout. |
 | Resource | `smtpfast_link_domain` | A custom hostname for tracking and unsubscribe links, with its CNAME record as an output (paid plans). |
 | Resource | `smtpfast_api_key` | An API key (the secret is returned once, on create). Name and scopes update in place. |
 | Resource | `smtpfast_webhook` | An event-delivery webhook, with its signing secret. |

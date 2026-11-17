@@ -46,6 +46,9 @@ type fakeAPI struct {
 	callerRole, callerMemberID string
 	freeTeam                   bool
 
+	// domainVerifyAfter is the VerifyAfter of every new domain.
+	domainVerifyAfter int
+
 	// conflictNextTemplateWrite simulates an edit made in the dashboard right
 	// before the next template update or publish arrives.
 	conflictNextTemplateWrite bool
@@ -82,6 +85,9 @@ type fakeProperty struct {
 type fakeDomain struct {
 	ID, Domain, Status string
 	Receiving          bool
+	// VerifyAfter is how many verify calls answer pending before one answers
+	// verified (-1: never). VerifyCalls counts them.
+	VerifyAfter, VerifyCalls int
 }
 
 type fakeForm struct {
@@ -226,6 +232,10 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	case "contact-properties":
 		f.serveProperties(w, r.Method, id, body)
 	case "domains":
+		if len(parts) > 2 && parts[2] == "verify" && r.Method == http.MethodPost {
+			f.serveDomainVerify(w, id)
+			return
+		}
 		f.serveDomains(w, r.Method, id, body)
 	case "forms":
 		f.serveForms(w, r.Method, id, body)
@@ -565,20 +575,67 @@ func (f *fakeAPI) serveProperties(w http.ResponseWriter, method, id string, body
 	}
 }
 
-func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body map[string]any) {
-	records := func(d *fakeDomain) []map[string]any {
-		out := []map[string]any{
-			{"type": "CNAME", "name": "tok1._domainkey." + d.Domain, "value": "tok1.dkim.amazonses.com", "priority": nil, "ttl": "Auto"},
-			{"type": "TXT", "name": d.Domain, "value": "v=spf1 include:amazonses.com ~all", "priority": nil, "ttl": "Auto"},
-			{"type": "TXT", "name": "_dmarc." + d.Domain, "value": "v=DMARC1; p=none;", "priority": nil, "ttl": "Auto"},
-			{"type": "MX", "name": "bounce." + d.Domain, "value": "feedback-smtp.us-east-1.amazonses.com", "priority": 10, "ttl": "Auto"},
-			{"type": "TXT", "name": "bounce." + d.Domain, "value": "v=spf1 include:amazonses.com ~all", "priority": nil, "ttl": "Auto"},
-		}
-		if d.Receiving {
-			out = append(out, map[string]any{"type": "MX", "name": d.Domain, "value": "inbound-smtp.us-east-1.amazonaws.com", "priority": 10, "purpose": "Inbound mail"})
-		}
-		return out
+// fakeDomainRecords copies the records the real API returns, in its order:
+// three DKIM CNAMEs, SPF, DMARC, the MAIL FROM MX and SPF, and the inbound MX
+// while receiving is on. GET adds the live DNS check of each.
+func fakeDomainRecords(d *fakeDomain, live bool) []map[string]any {
+	spf := "v=spf1 include:amazonses.com ~all"
+	out := []map[string]any{}
+	for _, tok := range []string{"tok1", "tok2", "tok3"} {
+		out = append(out, map[string]any{"type": "CNAME", "name": tok + "._domainkey." + d.Domain, "value": tok + ".dkim.amazonses.com", "priority": nil, "ttl": "Auto", "purpose": "DKIM authentication", "category": "verification"})
 	}
+	out = append(out,
+		map[string]any{"type": "TXT", "name": d.Domain, "value": spf, "priority": nil, "ttl": "Auto", "purpose": "SPF authorization", "category": "sending"},
+		map[string]any{"type": "TXT", "name": "_dmarc." + d.Domain, "value": "v=DMARC1; p=none;", "priority": nil, "ttl": "Auto", "purpose": "DMARC policy", "category": "verification"},
+		map[string]any{"type": "MX", "name": "bounce." + d.Domain, "value": "feedback-smtp.eu-west-2.amazonses.com", "priority": 10, "ttl": "Auto", "purpose": "MAIL FROM bounce delivery", "category": "sending"},
+		map[string]any{"type": "TXT", "name": "bounce." + d.Domain, "value": spf, "priority": nil, "ttl": "Auto", "purpose": "MAIL FROM SPF", "category": "sending"},
+	)
+	if live {
+		for _, rec := range out {
+			rec["live_check"], rec["actual_value"] = "match", rec["value"]
+			if rec["purpose"] == "SPF authorization" && d.Status != "verified" {
+				rec["live_check"], rec["actual_value"] = "missing", "google-site-verification=abc"
+			}
+		}
+	}
+	if d.Receiving {
+		out = append(out, map[string]any{"type": "MX", "name": d.Domain, "value": "inbound-smtp.eu-west-2.amazonaws.com", "priority": 10, "purpose": "Inbound mail", "category": "receiving", "ttl": "Auto", "actual_value": nil, "live_check": nil})
+	}
+	return out
+}
+
+// hasVerifiedParent reports whether a domain is a subdomain of a verified
+// domain on the team, which lets it receive before it is verified itself.
+func (f *fakeAPI) hasVerifiedParent(domain string) bool {
+	for _, other := range f.domains {
+		if other.Status == "verified" && strings.HasSuffix(domain, "."+other.Domain) {
+			return true
+		}
+	}
+	return false
+}
+
+// serveDomainVerify answers POST /v1/domains/{id}/verify.
+func (f *fakeAPI) serveDomainVerify(w http.ResponseWriter, id string) {
+	d, ok := f.domains[id]
+	if !ok {
+		writeError(w, http.StatusNotFound, "Domain not found")
+		return
+	}
+	d.VerifyCalls++
+	if d.VerifyAfter >= 0 && d.VerifyCalls > d.VerifyAfter {
+		d.Status = "verified"
+	}
+	checks := map[string]string{"dkim": "pending", "spf": "pending", "dmarc": "verified", "mail_from": "pending"}
+	phase, message := "dns_missing", "Some required DNS records are not visible or do not match yet."
+	if d.Status == "verified" {
+		checks = map[string]string{"dkim": "verified", "spf": "verified", "dmarc": "verified", "mail_from": "verified"}
+		phase, message = "verified", "Domain verified, you can send from this domain."
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"domain": d.Domain, "status": d.Status, "verification_phase": phase, "checks": checks, "mail_from_domain": "bounce." + d.Domain, "ses_configured": true, "dkim_check_restarted": false, "message": message})
+}
+
+func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body map[string]any) {
 	switch {
 	case method == http.MethodGet && id == "":
 		rows := []map[string]any{}
@@ -588,10 +645,10 @@ func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body ma
 		writeJSON(w, http.StatusOK, listBody(rows))
 		return
 	case method == http.MethodPost && id == "":
-		d := &fakeDomain{ID: f.nextID("dom"), Domain: body["domain"].(string), Status: "pending"}
+		d := &fakeDomain{ID: f.nextID("dom"), Domain: body["domain"].(string), Status: "pending", VerifyAfter: f.domainVerifyAfter}
 		f.domains[d.ID] = d
-		// Create answers without a receiving block.
-		writeJSON(w, http.StatusCreated, map[string]any{"id": d.ID, "domain": d.Domain, "status": d.Status, "dns_records": records(d), "created_at": f.now()})
+		// Create answers without a receiving block, region or statuses.
+		writeJSON(w, http.StatusCreated, map[string]any{"id": d.ID, "domain": d.Domain, "name": d.Domain, "status": d.Status, "dns_records": fakeDomainRecords(d, false), "created_at": f.now()})
 		return
 	}
 	d, ok := f.domains[id]
@@ -606,15 +663,23 @@ func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body ma
 		}
 		return map[string]any{
 			"enabled": d.Receiving, "status": status,
-			"mx_record": map[string]any{"name": d.Domain, "type": "MX", "priority": 10, "value": "inbound-smtp.us-east-1.amazonaws.com"},
+			"mx_record": map[string]any{"name": d.Domain, "type": "MX", "priority": 10, "value": "inbound-smtp.eu-west-2.amazonaws.com"},
 		}
 	}
 	switch method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"id": d.ID, "domain": d.Domain, "status": d.Status, "receiving": receiving(), "dns_records": records(d)})
+		checks := "pending"
+		if d.Status == "verified" {
+			checks = "verified"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": d.ID, "domain": d.Domain, "name": d.Domain, "status": d.Status, "receiving": receiving(), "dns_records": fakeDomainRecords(d, true),
+			"dkim_status": checks, "spf_status": checks, "dmarc_status": "verified", "mail_from_status": checks,
+			"mail_from_domain": "bounce." + d.Domain, "region": "eu-west-2",
+		})
 	case http.MethodPatch:
 		enabled, _ := body["receiving_enabled"].(bool)
-		if enabled && d.Status != "verified" {
+		if enabled && d.Status != "verified" && !f.hasVerifiedParent(d.Domain) {
 			writeError(w, http.StatusBadRequest, "Verify this domain, or add it as a subdomain of a domain that is already verified, before enabling receiving.")
 			return
 		}
