@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,9 +139,93 @@ resource "terraform_data" "record" {
 				Check: resource.TestCheckResourceAttr("smtpfast_domain.test", "records.%", "7"),
 			},
 			{
+				// A new domain name replaces the domain; the keys stay known,
+				// and the verification waits again for the new domain.
+				Config: strings.Replace(count(""), `"mail.example.com"`, `"mail2.example.com"`, 1),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("smtpfast_domain.test", plancheck.ResourceActionDestroyBeforeCreate),
+						plancheck.ExpectResourceAction("smtpfast_domain_verification.test", plancheck.ResourceActionDestroyBeforeCreate),
+						plancheck.ExpectResourceAction("terraform_data.record[6]", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("smtpfast_domain.test", "records.spf.name", "mail2.example.com"),
+					resource.TestCheckResourceAttr("smtpfast_domain_verification.test", "domain", "mail2.example.com"),
+				),
+			},
+			{
+				// The domain was read before the verification ran.
+				RefreshState: true,
+			},
+			{
 				ResourceName:      "smtpfast_domain.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// A check that fails with a server error is tried again.
+func TestPlanApplyDomainVerificationRetries(t *testing.T) {
+	skipWithoutTerraform(t)
+	fastVerificationPolls(t)
+	api, url := newFakeAPI(t)
+	api.domainVerifyFailures = 2
+	api.domainVerifyAfter = 1
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fakeProviderConfig(url) + `resource "smtpfast_domain" "test" {
+  domain = "mail.example.com"
+}
+
+resource "smtpfast_domain_verification" "test" {
+  domain_id = smtpfast_domain.test.id
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("smtpfast_domain_verification.test", "status", "verified"),
+					func(*terraform.State) error {
+						if got := api.domains["dom_1"].VerifyCalls; got != 4 {
+							return fmt.Errorf("verify calls = %d, want 4", got)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+// A key that is unknown at plan time (from another resource here) does not
+// stop the plan; the apply gets the real value.
+func TestPlanApplyUnknownAPIKeyAtPlan(t *testing.T) {
+	skipWithoutTerraform(t)
+	t.Setenv("SMTPFAST_API_KEY", "")
+	_, url := newFakeAPI(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `resource "terraform_data" "key" {
+  input = "test-key"
+}
+
+provider "smtpfast" {
+  api_key  = terraform_data.key.output
+  base_url = "` + url + `"
+}
+
+resource "smtpfast_domain" "test" {
+  domain = "mail.example.com"
+}
+`,
+				Check: resource.TestCheckResourceAttr("smtpfast_domain.test", "records.%", "7"),
 			},
 		},
 	})

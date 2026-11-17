@@ -194,14 +194,16 @@ func (r *domainVerificationResource) timeoutDetail(ctx context.Context, id strin
 			}
 			fmt.Fprintf(&b, " Checks: %s.", strings.Join(parts, ", "))
 		}
-	} else if lastErr != nil {
-		fmt.Fprintf(&b, " The last check failed: %s.", lastErr)
+	}
+	if lastErr != nil {
+		fmt.Fprintf(&b, " The last call failed: %s.", lastErr)
 	}
 
 	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	domain, err := r.client.GetDomain(readCtx, id)
 	if err != nil {
+		fmt.Fprintf(&b, "\n\nCould not read the DNS records to show which are missing: %s.", err)
 		return b.String()
 	}
 	var lines []string

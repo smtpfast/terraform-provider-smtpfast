@@ -46,8 +46,9 @@ type fakeAPI struct {
 	callerRole, callerMemberID string
 	freeTeam                   bool
 
-	// domainVerifyAfter is the VerifyAfter of every new domain.
-	domainVerifyAfter int
+	// domainVerifyAfter and domainVerifyFailures are the VerifyAfter and
+	// VerifyFailures of every new domain.
+	domainVerifyAfter, domainVerifyFailures int
 
 	// conflictNextTemplateWrite simulates an edit made in the dashboard right
 	// before the next template update or publish arrives.
@@ -86,8 +87,9 @@ type fakeDomain struct {
 	ID, Domain, Status string
 	Receiving          bool
 	// VerifyAfter is how many verify calls answer pending before one answers
-	// verified (-1: never). VerifyCalls counts them.
-	VerifyAfter, VerifyCalls int
+	// verified (-1: never). VerifyFailures is how many answer 503 first.
+	// VerifyCalls counts them all.
+	VerifyAfter, VerifyFailures, VerifyCalls int
 }
 
 type fakeForm struct {
@@ -623,7 +625,11 @@ func (f *fakeAPI) serveDomainVerify(w http.ResponseWriter, id string) {
 		return
 	}
 	d.VerifyCalls++
-	if d.VerifyAfter >= 0 && d.VerifyCalls > d.VerifyAfter {
+	if d.VerifyCalls <= d.VerifyFailures {
+		writeError(w, http.StatusServiceUnavailable, "Service unavailable")
+		return
+	}
+	if d.VerifyAfter >= 0 && d.VerifyCalls-d.VerifyFailures > d.VerifyAfter {
 		d.Status = "verified"
 	}
 	checks := map[string]string{"dkim": "pending", "spf": "pending", "dmarc": "verified", "mail_from": "pending"}
@@ -645,7 +651,7 @@ func (f *fakeAPI) serveDomains(w http.ResponseWriter, method, id string, body ma
 		writeJSON(w, http.StatusOK, listBody(rows))
 		return
 	case method == http.MethodPost && id == "":
-		d := &fakeDomain{ID: f.nextID("dom"), Domain: body["domain"].(string), Status: "pending", VerifyAfter: f.domainVerifyAfter}
+		d := &fakeDomain{ID: f.nextID("dom"), Domain: body["domain"].(string), Status: "pending", VerifyAfter: f.domainVerifyAfter, VerifyFailures: f.domainVerifyFailures}
 		f.domains[d.ID] = d
 		// Create answers without a receiving block, region or statuses.
 		writeJSON(w, http.StatusCreated, map[string]any{"id": d.ID, "domain": d.Domain, "name": d.Domain, "status": d.Status, "dns_records": fakeDomainRecords(d, false), "created_at": f.now()})

@@ -103,17 +103,17 @@ func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"region": schema.StringAttribute{
 				MarkdownDescription: "The Amazon SES region that sends for this domain, such as `eu-west-2`. SMTPfast picks it; there is no input for it.",
 				Computed:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				PlanModifiers:       []planmodifier.String{useKnownStateForUnknown{}},
 			},
 			"mail_from_domain": schema.StringAttribute{
 				MarkdownDescription: "The custom MAIL FROM (bounce) domain, always `bounce.<domain>`. Its MX and SPF records are `records.mail_from_mx` and `records.mail_from_spf`.",
 				Computed:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				PlanModifiers:       []planmodifier.String{useKnownStateForUnknown{}},
 			},
 			"spf_include": schema.StringAttribute{
 				MarkdownDescription: "The domain SMTPfast needs in the apex SPF record, such as `amazonses.com`. Use it to merge SMTPfast into an SPF record that already lists other senders: `include:${smtpfast_domain.example.spf_include}`. A domain must have only one SPF record.",
 				Computed:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				PlanModifiers:       []planmodifier.String{useKnownStateForUnknown{}},
 			},
 			"receiving_enabled": schema.BoolAttribute{
 				MarkdownDescription: "Turn inbound email on for this domain (paid plans). The domain must be verified for sending, or be a subdomain of a domain that is already verified on the team. For a brand-new domain that is not such a subdomain, set this in a later apply once `status` is `verified`. When enabled, `records` gains `receiving_mx`, the MX record (with `priority`) to publish. Leaving it unset keeps whatever the domain currently has; a new domain starts with receiving off.",
@@ -332,9 +332,16 @@ func (r *domainResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		}
 	}
 
-	if plan.Records.IsUnknown() && !state.Records.IsNull() && !state.Records.IsUnknown() {
+	stateRecords := state.Records
+	if stateRecords.IsNull() {
+		// State from 0.6 has only dns_records until the next refresh.
+		rebuilt, diags := recordsFromList(ctx, state.DNSRecords, state.Domain.ValueString())
+		resp.Diagnostics.Append(diags...)
+		stateRecords = rebuilt
+	}
+	if plan.Records.IsUnknown() && !stateRecords.IsNull() && !stateRecords.IsUnknown() {
 		elems := map[string]attr.Value{}
-		for key, value := range state.Records.Elements() {
+		for key, value := range stateRecords.Elements() {
 			if key != recordKeyReceivingMX {
 				elems[key] = value
 			}
@@ -381,6 +388,40 @@ func (r *domainResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("dns_records"), dnsRecords)...)
+}
+
+// recordsFromList builds the records map from a dns_records list in state,
+// for state written before records existed. The list has no purpose or
+// category, so those are left to the apply.
+func recordsFromList(ctx context.Context, list types.List, domain string) (types.Map, diag.Diagnostics) {
+	if list.IsNull() || list.IsUnknown() {
+		return types.MapNull(dnsRecordObjectType), nil
+	}
+	var models []dnsRecordModel
+	diags := list.ElementsAs(ctx, &models, false)
+	if diags.HasError() {
+		return types.MapNull(dnsRecordObjectType), diags
+	}
+	records := make([]client.DNSRecord, 0, len(models))
+	for _, m := range models {
+		rec := client.DNSRecord{Type: m.Type.ValueString(), Name: m.Name.ValueString(), Value: m.Value.ValueString()}
+		if !m.Priority.IsNull() && !m.Priority.IsUnknown() {
+			p := m.Priority.ValueInt64()
+			rec.Priority = &p
+		}
+		records = append(records, rec)
+	}
+	elems := map[string]attr.Value{}
+	for k, rec := range keyedRecords(records, domain) {
+		m := dnsRecordToModel(rec)
+		m.Purpose, m.Category = types.StringUnknown(), types.StringUnknown()
+		obj, d := types.ObjectValueFrom(ctx, dnsRecordAttrTypes, m)
+		diags.Append(d...)
+		elems[k] = obj
+	}
+	out, d := types.MapValue(dnsRecordObjectType, elems)
+	diags.Append(d...)
+	return out, diags
 }
 
 // saveReceivingMX keeps the MX record receiving needs in private state, for

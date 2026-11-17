@@ -1,9 +1,13 @@
 package provider
 
 import (
+	"context"
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 
 	"github.com/smtpfast/terraform-provider-smtpfast/internal/client"
 )
@@ -126,5 +130,44 @@ func TestDescribeDomainFromCreateResponse(t *testing.T) {
 	got = describeDomain(d)
 	if got.Region.ValueString() != "us-east-1" || got.MailFromDomain.ValueString() != "mf.example.com" || got.DKIMStatus.ValueString() != "verified" {
 		t.Fatalf("describeDomain = %+v", got)
+	}
+}
+
+// State from 0.6 has dns_records and no records; a plan without a refresh
+// rebuilds the map from the list.
+func TestRecordsFromList(t *testing.T) {
+	ctx := context.Background()
+	ten := int64(10)
+	list, diags := dnsRecordsToList(ctx, []client.DNSRecord{
+		{Type: "CNAME", Name: "b._domainkey.example.com", Value: "b.dkim.amazonses.com"},
+		{Type: "CNAME", Name: "a._domainkey.example.com", Value: "a.dkim.amazonses.com"},
+		{Type: "TXT", Name: "example.com", Value: "v=spf1 include:amazonses.com ~all"},
+		{Type: "MX", Name: "bounce.example.com", Value: "feedback-smtp.eu-west-2.amazonses.com", Priority: &ten},
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	got, diags := recordsFromList(ctx, list, "example.com")
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	elems := got.Elements()
+	if len(elems) != 4 {
+		t.Fatalf("got %d records: %v", len(elems), elems)
+	}
+	var mx dnsRecordModel
+	if d := elems["mail_from_mx"].(types.Object).As(ctx, &mx, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatal(d)
+	}
+	if mx.Priority.ValueInt64() != 10 || !mx.Purpose.IsUnknown() || mx.Name.ValueString() != "bounce.example.com" {
+		t.Fatalf("mail_from_mx = %+v", mx)
+	}
+	var dkim dnsRecordModel
+	_ = elems["dkim_1"].(types.Object).As(ctx, &dkim, basetypes.ObjectAsOptions{})
+	if dkim.Name.ValueString() != "a._domainkey.example.com" {
+		t.Fatalf("dkim_1 = %+v", dkim)
+	}
+	if null, _ := recordsFromList(ctx, types.ListNull(dnsRecordObjectType), "example.com"); !null.IsNull() {
+		t.Fatalf("null list gave %v", null)
 	}
 }
